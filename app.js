@@ -149,6 +149,11 @@ function normalizeModeState() {
   if (!meta.views.includes(state.activeView)) state.activeView = meta.defaultView;
 }
 function selectedSupplier() { return state.suppliers.find((s) => s.id === state.selectedSupplierId) || state.suppliers[0]; }
+function comparisonSuppliers() {
+  const filled = state.suppliers.filter((supplier) => String(supplier.companyName || "").trim());
+  return filled.length ? filled : state.suppliers.slice(0, 1);
+}
+function displaySupplierName(supplier) { return supplier.companyName || "公司名称未填写"; }
 function requirementFor(response) { return requirements.find((r) => r.requirementCode === response.requirementCode); }
 function isMobileViewport() { return window.matchMedia && window.matchMedia("(max-width: 780px)").matches; }
 function isFilled(r) { return Boolean(r.support && r.depth && r.standardType); }
@@ -281,7 +286,7 @@ function bossWarning(supplier) {
 
 function lowPriceRiskWarning(supplier) {
   const s = calcScores(supplier);
-  const totals = state.suppliers.map(quoteTotal).filter(Boolean);
+  const totals = comparisonSuppliers().map(quoteTotal).filter(Boolean);
   const avg = totals.length ? totals.reduce((sum, value) => sum + value, 0) / totals.length : 0;
   const clearlyLow = avg > 0 && quoteTotal(supplier) > 0 && quoteTotal(supplier) < avg * 0.72;
   const hiddenSignals = [
@@ -343,8 +348,8 @@ function renderTopbar() {
 }
 
 function renderSummary() {
-  const ranked = state.suppliers.map((supplier) => ({ supplier, scores: calcScores(supplier) })).sort((a, b) => b.scores.totalScore - a.scores.totalScore);
-  return `<div class="summary-grid"><div class="metric wide"><div class="status-row"><span class="pill teal">${state.activeRole}</span><span class="pill green">${requirements.length} 个细分需求</span><span class="pill amber">A-F + H 能力分类</span></div><div><div class="metric-label">平台定位</div><div class="metric-foot">不是普通功能清单，而是用于正式招标、老板决策、供应商填报和隐性成本识别的集团级评估平台。</div></div></div><div class="metric"><div class="metric-label">当前第一名</div><div class="metric-value">${ranked[0].scores.totalScore}</div><div class="metric-foot">${ranked[0].supplier.label}<br />${ranked[0].supplier.companyName || "公司名称未填写"}</div></div><div class="metric"><div class="metric-label">ERP 深度最高</div><div class="metric-value">${Math.max(...ranked.map((x) => x.scores.erpScore))}</div><div class="metric-foot">重点识别 ERP / WMS 真能力。</div></div><div class="metric"><div class="metric-label">高风险项</div><div class="metric-value">${ranked.reduce((sum, x) => sum + x.scores.highRisk, 0)}</div><div class="metric-foot">含隐性定制、第三方依赖和合规缺口。</div></div></div>`;
+  const ranked = comparisonSuppliers().map((supplier) => ({ supplier, scores: calcScores(supplier) })).sort((a, b) => b.scores.totalScore - a.scores.totalScore);
+  return `<div class="summary-grid"><div class="metric wide"><div class="status-row"><span class="pill teal">${state.activeRole}</span><span class="pill green">${requirements.length} 个细分需求</span><span class="pill amber">A-F + H 能力分类</span></div><div><div class="metric-label">平台定位</div><div class="metric-foot">不是普通功能清单，而是用于正式招标、老板决策、供应商填报和隐性成本识别的集团级评估平台。</div></div></div><div class="metric"><div class="metric-label">当前第一名</div><div class="metric-value">${ranked[0].scores.totalScore}</div><div class="metric-foot">${displaySupplierName(ranked[0].supplier)}</div></div><div class="metric"><div class="metric-label">ERP 深度最高</div><div class="metric-value">${Math.max(...ranked.map((x) => x.scores.erpScore))}</div><div class="metric-foot">重点识别 ERP / WMS 真能力。</div></div><div class="metric"><div class="metric-label">高风险项</div><div class="metric-value">${ranked.reduce((sum, x) => sum + x.scores.highRisk, 0)}</div><div class="metric-foot">含隐性定制、第三方依赖和合规缺口。</div></div></div>`;
 }
 
 function renderMainPanel() {
@@ -371,21 +376,22 @@ function decisionLabel(score) {
 }
 
 function renderDecisionCards() {
-  return `<div class="decision-grid">${state.suppliers.map((supplier) => { const s = calcScores(supplier); const [label, tone] = decisionLabel(s); return `<article class="decision-card ${tone}"><div><span>${supplier.label}</span><strong>${label}</strong><p>${supplier.companyName || "公司名称未填写"}</p></div><div class="decision-score">${s.totalScore}</div><div class="decision-lines"><span>ERP ${s.erpScore}</span><span>跨业态 ${s.crossScore}</span><span>迁移 ${s.migrationScore}</span><span>高风险 ${s.highRisk} 项</span></div>${bossWarning(supplier) ? `<div class="warning-text">${bossWarning(supplier)}</div>` : ""}${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : ""}</article>`; }).join("")}</div>`;
+  return `<div class="decision-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); const [label, tone] = decisionLabel(s); return `<article class="decision-card ${tone}"><div><span>供应商</span><strong>${label}</strong><p>${displaySupplierName(supplier)}</p></div><div class="decision-score">${s.totalScore}</div><div class="decision-lines"><span>ERP ${s.erpScore}</span><span>跨业态 ${s.crossScore}</span><span>迁移 ${s.migrationScore}</span><span>高风险 ${s.highRisk} 项</span></div>${bossWarning(supplier) ? `<div class="warning-text">${bossWarning(supplier)}</div>` : ""}${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : ""}</article>`; }).join("")}</div>`;
 }
 
 function renderQuoteComparison() {
-  const totals = state.suppliers.map(quoteTotal).filter(Boolean);
+  const suppliers = comparisonSuppliers();
+  const totals = suppliers.map(quoteTotal).filter(Boolean);
   const min = totals.length ? Math.min(...totals) : 0;
   const max = totals.length ? Math.max(...totals) : 0;
   const avg = totals.length ? totals.reduce((sum, value) => sum + value, 0) / totals.length : 0;
   const q = (supplier) => supplier.quotation || {};
-  return `<div class="section-title"><h3>供应商报价对比</h3><span>最低 ${money(min)} · 最高 ${money(max)} · 平均 ${money(avg)}</span></div><div class="matrix-wrap"><table><thead><tr><th>供应商</th><th>软件费用</th><th>实施费用</th><th>数据迁移费用</th><th>培训费用</th><th>硬件费用</th><th>第三方费用</th><th>年服务费</th><th>需求项费用汇总</th><th>项目总金额</th><th>隐性成本风险提示</th></tr></thead><tbody>${state.suppliers.map((supplier) => `<tr><td>${supplier.label}<br /><span class="muted-text">${supplier.companyName || "公司名称未填写"}</span></td><td>${q(supplier).software || "-"}</td><td>${q(supplier).implementation || "-"}</td><td>${q(supplier).migration || "-"}</td><td>${q(supplier).training || "-"}</td><td>${q(supplier).hardware || "-"}</td><td>${q(supplier).thirdParty || "-"}</td><td>${q(supplier).annualSaas || "-"}</td><td><strong>${money(responseTotals(supplier).fee)}</strong></td><td><strong>${money(quoteTotal(supplier))}</strong></td><td>${lowPriceRiskWarning(supplier) || "暂无明显报价风险"}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="section-title"><h3>供应商报价对比</h3><span>最低 ${money(min)} · 最高 ${money(max)} · 平均 ${money(avg)}</span></div><div class="matrix-wrap"><table><thead><tr><th>供应商</th><th>软件费用</th><th>实施费用</th><th>数据迁移费用</th><th>培训费用</th><th>硬件费用</th><th>第三方费用</th><th>年服务费</th><th>需求项费用汇总</th><th>项目总金额</th><th>隐性成本风险提示</th></tr></thead><tbody>${suppliers.map((supplier) => `<tr><td><strong>${displaySupplierName(supplier)}</strong></td><td>${q(supplier).software || "-"}</td><td>${q(supplier).implementation || "-"}</td><td>${q(supplier).migration || "-"}</td><td>${q(supplier).training || "-"}</td><td>${q(supplier).hardware || "-"}</td><td>${q(supplier).thirdParty || "-"}</td><td>${q(supplier).annualSaas || "-"}</td><td><strong>${money(responseTotals(supplier).fee)}</strong></td><td><strong>${money(quoteTotal(supplier))}</strong></td><td>${lowPriceRiskWarning(supplier) || "暂无明显报价风险"}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderHeatmap() {
   const categories = [["C", "ERP/WMS"], ["D", "跨业态"], ["E", "实施迁移"], ["F", "架构扩展"], ["H", "硬件适配"]];
-  return `<div class="section-title"><h3>风险热力图</h3><span>颜色越深，越需要优先澄清</span></div><div class="heatmap-grid">${state.suppliers.map((supplier) => { const s = calcScores(supplier); return `<article><strong>${supplier.label}</strong>${categories.map(([key, label]) => { const value = s.categoryScores[key] || 0; const tone = value >= 78 ? "low" : value >= 62 ? "medium" : "high"; return `<div class="heatmap-cell ${tone}"><span>${label}</span><b>${value}</b></div>`; }).join("")}<div class="heatmap-cell ${s.highRisk <= 8 ? "low" : s.highRisk <= 18 ? "medium" : "high"}"><span>高风险项</span><b>${s.highRisk}</b></div></article>`; }).join("")}</div>`;
+  return `<div class="section-title"><h3>风险热力图</h3><span>颜色越深，越需要优先澄清</span></div><div class="heatmap-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); return `<article><strong>${displaySupplierName(supplier)}</strong>${categories.map(([key, label]) => { const value = s.categoryScores[key] || 0; const tone = value >= 78 ? "low" : value >= 62 ? "medium" : "high"; return `<div class="heatmap-cell ${tone}"><span>${label}</span><b>${value}</b></div>`; }).join("")}<div class="heatmap-cell ${s.highRisk <= 8 ? "low" : s.highRisk <= 18 ? "medium" : "high"}"><span>高风险项</span><b>${s.highRisk}</b></div></article>`; }).join("")}</div>`;
 }
 
 function renderWeightAnalysis() {
@@ -414,16 +420,16 @@ function renderProjectBackground() {
 }
 
 function renderRanking() {
-  return `<div class="matrix-wrap"><table><thead><tr><th>排名</th><th>供应商</th>${scoreDimensions.map((d) => `<th>${d}</th>`).join("")}<th>老板提示</th></tr></thead><tbody>${state.suppliers.map((supplier) => ({ supplier, s: calcScores(supplier) })).sort((a,b)=>b.s.totalScore-a.s.totalScore).map((row, i) => `<tr><td>${i + 1}</td><td><button class="supplier-btn" data-supplier="${row.supplier.id}"><strong>${row.supplier.label}</strong><span>${row.supplier.companyName || "公司名称未填写"}</span></button></td><td><span class="score ${scoreClass(row.s.totalScore)}">${row.s.totalScore}</span></td><td>${mini(row.s.supportRate)}</td><td>${mini(row.s.standardRate)}</td><td>${mini(100-row.s.customRate)}</td><td>${mini(row.s.erpScore)}</td><td>${mini(row.s.crossScore)}</td><td>${mini(row.s.migrationScore)}</td><td>${mini(row.s.architectureScore)}</td><td>${mini(row.s.hardwareScore)}</td><td>${mini(row.s.hiddenCostScore)}</td><td>${bossWarning(row.supplier) || lowPriceRiskWarning(row.supplier) || "暂无关键决策风险"}</td></tr>`).join("")}</tbody></table></div>`;
+  return `<div class="matrix-wrap"><table><thead><tr><th>排名</th><th>供应商</th>${scoreDimensions.map((d) => `<th>${d}</th>`).join("")}<th>老板提示</th></tr></thead><tbody>${comparisonSuppliers().map((supplier) => ({ supplier, s: calcScores(supplier) })).sort((a,b)=>b.s.totalScore-a.s.totalScore).map((row, i) => `<tr><td>${i + 1}</td><td><button class="supplier-btn" data-supplier="${row.supplier.id}"><strong>${displaySupplierName(row.supplier)}</strong></button></td><td><span class="score ${scoreClass(row.s.totalScore)}">${row.s.totalScore}</span></td><td>${mini(row.s.supportRate)}</td><td>${mini(row.s.standardRate)}</td><td>${mini(100-row.s.customRate)}</td><td>${mini(row.s.erpScore)}</td><td>${mini(row.s.crossScore)}</td><td>${mini(row.s.migrationScore)}</td><td>${mini(row.s.architectureScore)}</td><td>${mini(row.s.hardwareScore)}</td><td>${mini(row.s.hiddenCostScore)}</td><td>${bossWarning(row.supplier) || lowPriceRiskWarning(row.supplier) || "暂无关键决策风险"}</td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderBossCharts() {
-  return `<div class="guide-grid">${state.suppliers.map((supplier) => { const s = calcScores(supplier); return `<article><span>${supplier.label}</span><strong>${supplier.companyName || "公司名称未填写"}</strong><p>风险热力图 / 工时分布 / 成本结构 / 模块完成度</p>${["ERP", s.erpScore, "跨业态", s.crossScore, "迁移", s.migrationScore, "架构", s.architectureScore, "硬件", s.hardwareScore].reduce((html, item, i, arr) => i % 2 ? html : html + `<div class="chart-row"><b>${item}</b>${mini(arr[i+1])}</div>`, "")}<div class="chart-row"><b>定制工时</b><span>${s.customDays} 人天</span></div><div class="chart-row"><b>高风险需求</b><span>${s.highRisk} 项</span></div></article>`; }).join("")}</div>`;
+  return `<div class="guide-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); return `<article><span>供应商</span><strong>${displaySupplierName(supplier)}</strong><p>风险热力图 / 工时分布 / 成本结构 / 模块完成度</p>${["ERP", s.erpScore, "跨业态", s.crossScore, "迁移", s.migrationScore, "架构", s.architectureScore, "硬件", s.hardwareScore].reduce((html, item, i, arr) => i % 2 ? html : html + `<div class="chart-row"><b>${item}</b>${mini(arr[i+1])}</div>`, "")}<div class="chart-row"><b>定制工时</b><span>${s.customDays} 人天</span></div><div class="chart-row"><b>高风险需求</b><span>${s.highRisk} 项</span></div></article>`; }).join("")}</div>`;
 }
 
 function renderRiskList() {
-  const rows = state.suppliers.reduce((all, supplier) => all.concat(supplier.responses.map((response) => ({ supplier, response, req: requirementFor(response), warnings: validateResponse(response) })).filter((x) => x.warnings.length >= 2)), []).slice(0, 18);
-  return `<div class="matrix-wrap"><table><thead><tr><th>供应商</th><th>需求编号</th><th>需求名称</th><th>能力分类</th><th>权重</th><th>风险</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${row.supplier.label}</td><td>${row.req.requirementCode}</td><td>${row.req.requirementName}</td><td>${row.req.capabilityCategory} 类：${row.req.capabilityName}</td><td>${row.req.weightLevel} / ${row.req.weightScore}</td><td><span class="warning-text">${row.warnings.join("；")}</span></td></tr>`).join("")}</tbody></table></div>`;
+  const rows = comparisonSuppliers().reduce((all, supplier) => all.concat(supplier.responses.map((response) => ({ supplier, response, req: requirementFor(response), warnings: validateResponse(response) })).filter((x) => x.warnings.length >= 2)), []).slice(0, 18);
+  return `<div class="matrix-wrap"><table><thead><tr><th>供应商</th><th>需求编号</th><th>需求名称</th><th>能力分类</th><th>权重</th><th>风险</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${displaySupplierName(row.supplier)}</td><td>${row.req.requirementCode}</td><td>${row.req.requirementName}</td><td>${row.req.capabilityCategory} 类：${row.req.capabilityName}</td><td>${row.req.weightLevel} / ${row.req.weightScore}</td><td><span class="warning-text">${row.warnings.join("；")}</span></td></tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderSupplierView(supplier) {
@@ -445,7 +451,7 @@ function renderSubmitCheck(supplier) {
 }
 
 function renderSupplierEditor(supplier) {
-  return `<div class="supplier-editor"><div class="field"><label>供应商编号</label><input value="${supplier.label}" disabled /></div><div class="field"><label>公司名称</label><input data-supplier-field="companyName" value="${escapeAttr(supplier.companyName)}" placeholder="请填写公司名称" /></div><div class="field"><label>联系人</label><input data-supplier-field="contact" value="${escapeAttr(supplier.contact)}" placeholder="请填写联系人" /></div><div class="field"><label>联系邮箱</label><input data-supplier-field="email" value="${escapeAttr(supplier.email)}" placeholder="请填写联系邮箱" /></div><div class="field"><label>官网</label><input data-supplier-field="website" value="${escapeAttr(supplier.website)}" placeholder="https://" /></div><div class="field span-2"><label>备注</label><textarea data-supplier-field="notes" placeholder="请填写商务范围、报价边界或交付说明">${escapeHtml(supplier.notes)}</textarea></div></div>`;
+  return `<div class="supplier-editor"><div class="field"><label>公司名称</label><input data-supplier-field="companyName" value="${escapeAttr(supplier.companyName)}" placeholder="请填写公司名称" /></div><div class="field"><label>联系人</label><input data-supplier-field="contact" value="${escapeAttr(supplier.contact)}" placeholder="请填写联系人" /></div><div class="field"><label>联系邮箱</label><input data-supplier-field="email" value="${escapeAttr(supplier.email)}" placeholder="请填写联系邮箱" /></div><div class="field"><label>官网</label><input data-supplier-field="website" value="${escapeAttr(supplier.website)}" placeholder="https://" /></div><div class="field span-2"><label>备注</label><textarea data-supplier-field="notes" placeholder="请填写商务范围、报价边界或交付说明">${escapeHtml(supplier.notes)}</textarea></div></div>`;
 }
 
 function renderSupplierCapabilityBlock(supplier) {
@@ -493,12 +499,13 @@ function renderRiskView() {
 function renderAdminView() {
   const categoryCounts = {};
   Object.keys(capabilityMeta).forEach((key) => { categoryCounts[key] = requirements.filter((req) => req.capabilityCategory === key).length; });
-  return `<div class="home-surface"><div class="section-title"><h3>全部供应商数据</h3><span>管理员用于检查提交完整度与风险状态</span></div><div class="guide-grid">${state.suppliers.map((supplier) => { const s = calcScores(supplier); return `<article><span>${supplier.label}</span><strong>${supplier.companyName || "公司名称未填写"}</strong><p>完成度 ${s.completion}% · 总分 ${s.totalScore} · 高风险 ${s.highRisk} 项</p>${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : `<div class="muted-text">暂无低价高风险提示</div>`}</article>`; }).join("")}</div><div class="section-title"><h3>需求结构统计</h3><span>110 项硬核需求，按能力分类统计</span></div><div class="module-grid">${Object.entries(capabilityMeta).map(([key, meta]) => `<article><h4>${key} 类：${meta.name}</h4><p>权重：${meta.weightLevel} / ${meta.weightScore}</p><span>${categoryCounts[key] || 0} 项需求</span></article>`).join("")}</div><div class="section-title"><h3>导出与规则</h3><span>用于正式评审、会议汇报和供应商澄清</span></div><div class="guide-grid"><article><span>导出</span><strong>供应商响应 JSON</strong><p>包含供应商基础能力、项目报价、逐项响应、评分与风险字段。</p><button type="button" class="btn primary" data-export="json">导出 JSON</button></article><article><span>导出</span><strong>对比结果 CSV</strong><p>包含报价结构、moduleCode、requirementCode、权重、分类分、加权分、工时和费用。</p><button type="button" class="btn primary" data-export="csv">导出 CSV</button></article><article><span>风险规则</span><strong>重点识别低价高风险</strong><p>报价明显偏低但定制开发较多、定制开发未写工时、需求费用缺失或总报价结构不完整。</p></article></div>${renderRiskView()}</div>`;
+  return `<div class="home-surface"><div class="section-title"><h3>全部供应商数据</h3><span>管理员用于导入供应商提交文件、检查完整度与风险状态</span></div><div class="notice">静态演示版不会自动收集外部供应商数据。供应商在填写页导出 JSON 后，管理员在此导入文件，即可加入老板视图和报价对比。</div><div class="guide-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); return `<article><span>供应商</span><strong>${displaySupplierName(supplier)}</strong><p>完成度 ${s.completion}% · 总分 ${s.totalScore} · 高风险 ${s.highRisk} 项</p>${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : `<div class="muted-text">暂无低价高风险提示</div>`}</article>`; }).join("")}</div><div class="section-title"><h3>需求结构统计</h3><span>110 项硬核需求，按能力分类统计</span></div><div class="module-grid">${Object.entries(capabilityMeta).map(([key, meta]) => `<article><h4>${key} 类：${meta.name}</h4><p>权重：${meta.weightLevel} / ${meta.weightScore}</p><span>${categoryCounts[key] || 0} 项需求</span></article>`).join("")}</div><div class="section-title"><h3>导入、导出与规则</h3><span>用于正式评审、会议汇报和供应商澄清</span></div><div class="guide-grid"><article><span>导入</span><strong>导入供应商 JSON</strong><p>支持导入一个或多个供应商填写页导出的 JSON 文件，导入后按公司名称进入对比。</p><label class="file-import"><input type="file" accept="application/json,.json" multiple data-import-supplier />选择 JSON 文件</label></article><article><span>导出</span><strong>供应商响应 JSON</strong><p>包含供应商基础能力、项目报价、逐项响应、评分与风险字段。</p><button type="button" class="btn primary" data-export="json">导出 JSON</button></article><article><span>导出</span><strong>对比结果 CSV</strong><p>包含报价结构、moduleCode、requirementCode、权重、分类分、加权分、工时和费用。</p><button type="button" class="btn primary" data-export="csv">导出 CSV</button></article><article><span>风险规则</span><strong>重点识别低价高风险</strong><p>报价明显偏低但定制开发较多、定制开发未写工时、需求费用缺失或总报价结构不完整。</p></article></div>${renderRiskView()}</div>`;
 }
 
 function renderDisclosureBoard() {
   const checks = [["供应商自声明全部确认", (s) => s.declarations.every(Boolean)], ["无疑似隐性定制开发", (s) => s.responses.every((r) => !(r.standardType === "标准功能" && Number(r.customDays || 0) >= 3))], ["第三方整体说明完整", (s) => !s.capabilities || s.capabilities.thirdParty !== "是" || s.capabilities.thirdPartySummary], ["ERP / WMS 深度能力有响应", (s) => s.responses.filter((r) => requirementFor(r).capabilityCategory === "C").every(isFilled)], ["实施迁移能力有响应", (s) => s.responses.filter((r) => requirementFor(r).capabilityCategory === "E").every(isFilled)], ["项目总报价结构已填写", (s) => ["software", "implementation", "migration", "training", "annualSaas"].every((key) => s.quotation && s.quotation[key])]];
-  return `<div class="matrix-wrap"><table><thead><tr><th>校验项目</th>${state.suppliers.map((s) => `<th>${s.label}</th>`).join("")}</tr></thead><tbody>${checks.map(([name, fn]) => `<tr><td><strong>${name}</strong></td>${state.suppliers.map((s) => `<td><span class="${fn(s) ? "check" : "miss"}">${fn(s) ? "✓" : "!"}</span></td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  const suppliers = comparisonSuppliers();
+  return `<div class="matrix-wrap"><table><thead><tr><th>校验项目</th>${suppliers.map((s) => `<th>${displaySupplierName(s)}</th>`).join("")}</tr></thead><tbody>${checks.map(([name, fn]) => `<tr><td><strong>${name}</strong></td>${suppliers.map((s) => `<td><span class="${fn(s) ? "check" : "miss"}">${fn(s) ? "✓" : "!"}</span></td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
 }
 
 function renderCriteriaPanel() {
@@ -507,7 +514,7 @@ function renderCriteriaPanel() {
 
 function renderDetailPanel(supplier) {
   const s = calcScores(supplier);
-  return `<aside class="panel detail-panel"><div class="supplier-head"><div><h2>${supplier.label}</h2><div class="supplier-meta">${supplier.companyName || "公司名称未填写"}<br />联系人：${supplier.contact || "未填写"} · 官网：${supplier.website || "未填写"}</div></div><div class="status-row"><span class="pill ${riskClass(s.risk)}">${s.risk === "high" ? "高风险" : s.risk === "medium" ? "中风险" : "低风险"}</span><span class="pill ${s.completion >= 80 ? "green" : s.completion >= 55 ? "amber" : "red"}">${s.completion}% 完成</span></div></div>${lowPriceRiskWarning(supplier) ? `<div class="detail-section"><div class="risk-alert">${lowPriceRiskWarning(supplier)}</div></div>` : ""}<div class="detail-section"><h3>决策摘要</h3><div class="risk-grid"><div class="risk-cell low">总分<small>${s.totalScore}</small></div><div class="risk-cell medium">ERP<small>${s.erpScore}</small></div><div class="risk-cell medium">跨业态<small>${s.crossScore}</small></div><div class="risk-cell high">高风险<small>${s.highRisk} 项</small></div></div></div><div class="detail-section"><h3>报价与风险</h3><div class="disclosure-list"><div class="disclosure-item"><span class="warn">价</span><span>项目总金额：${money(quoteTotal(supplier))}</span><span></span></div><div class="disclosure-item"><span class="warn">工</span><span>定制开发：${s.custom} 项，${s.customDays} 人天</span><span></span></div><div class="disclosure-item"><span class="warn">费</span><span>需求项费用缺失：${s.hiddenMissing} 项</span><span></span></div></div></div></aside>`;
+  return `<aside class="panel detail-panel"><div class="supplier-head"><div><h2>${displaySupplierName(supplier)}</h2><div class="supplier-meta">联系人：${supplier.contact || "未填写"} · 官网：${supplier.website || "未填写"}</div></div><div class="status-row"><span class="pill ${riskClass(s.risk)}">${s.risk === "high" ? "高风险" : s.risk === "medium" ? "中风险" : "低风险"}</span><span class="pill ${s.completion >= 80 ? "green" : s.completion >= 55 ? "amber" : "red"}">${s.completion}% 完成</span></div></div>${lowPriceRiskWarning(supplier) ? `<div class="detail-section"><div class="risk-alert">${lowPriceRiskWarning(supplier)}</div></div>` : ""}<div class="detail-section"><h3>决策摘要</h3><div class="risk-grid"><div class="risk-cell low">总分<small>${s.totalScore}</small></div><div class="risk-cell medium">ERP<small>${s.erpScore}</small></div><div class="risk-cell medium">跨业态<small>${s.crossScore}</small></div><div class="risk-cell high">高风险<small>${s.highRisk} 项</small></div></div></div><div class="detail-section"><h3>报价与风险</h3><div class="disclosure-list"><div class="disclosure-item"><span class="warn">价</span><span>项目总金额：${money(quoteTotal(supplier))}</span><span></span></div><div class="disclosure-item"><span class="warn">工</span><span>定制开发：${s.custom} 项，${s.customDays} 人天</span><span></span></div><div class="disclosure-item"><span class="warn">费</span><span>需求项费用缺失：${s.hiddenMissing} 项</span><span></span></div></div></div></aside>`;
 }
 
 function mini(value) { return `<div class="mini-score"><span>${clamp(value)}</span><div class="bar ${riskClass(value < 60 ? "high" : value < 78 ? "medium" : "low")}"><span style="width:${clamp(value)}%"></span></div></div>`; }
@@ -600,6 +607,13 @@ function handleAppInput(event) {
 }
 
 function handleAppChange(event) {
+  const importInput = eventClosest(event, "[data-import-supplier]");
+  if (importInput) {
+    importSupplierFiles(Array.from(importInput.files || []));
+    importInput.value = "";
+    return;
+  }
+
   const declaration = eventClosest(event, "[data-declaration]");
   if (declaration) {
     selectedSupplier().declarations[Number(declaration.dataset.declaration)] = declaration.checked;
@@ -713,8 +727,74 @@ function showExportStatus(filename, content, type = "application/json;charset=ut
   });
 }
 
+function normalizeImportedSupplier(payload, index) {
+  const base = cloneData(defaultState.suppliers[0]);
+  const safeName = String(payload.companyName || payload.supplier || `导入供应商 ${index + 1}`).trim();
+  base.id = `imported-${Date.now()}-${index}-${safeName.replace(/[^\w\u4e00-\u9fa5-]+/g, "-").slice(0, 24)}`;
+  base.code = "";
+  base.label = safeName;
+  base.companyName = payload.companyName || safeName;
+  base.contact = payload.contact || "";
+  base.email = payload.email || "";
+  base.website = payload.website || "";
+  base.notes = payload.notes || "";
+  base.capabilities = { ...base.capabilities, ...(payload.capabilities || {}) };
+  base.quotation = { ...base.quotation, ...(payload.quotation || {}) };
+  delete base.quotation.totalOverride;
+  base.declarations = Array.isArray(payload.declarations)
+    ? selfDeclarationItems.map((_, i) => {
+      const item = payload.declarations[i];
+      return Boolean(item && typeof item === "object" ? item.confirmed : item);
+    })
+    : base.declarations;
+  const importedResponses = Array.isArray(payload.responses) ? payload.responses : [];
+  base.responses = requirements.map((req, i) => {
+    const source = importedResponses.find((item) => item.requirementCode === req.requirementCode) || {};
+    return { ...base.responses[i], ...source, requirementCode: req.requirementCode };
+  });
+  return base;
+}
+
+function importSupplierPayload(payload, index = 0) {
+  const imported = normalizeImportedSupplier(payload, index);
+  const key = String(imported.companyName || imported.email || imported.id).trim().toLowerCase();
+  const existingIndex = state.suppliers.findIndex((supplier) => {
+    const supplierKey = String(supplier.companyName || supplier.email || "").trim().toLowerCase();
+    return supplierKey && supplierKey === key;
+  });
+  if (existingIndex >= 0) state.suppliers[existingIndex] = imported;
+  else state.suppliers.push(imported);
+}
+
+function importSupplierFiles(files) {
+  if (!files.length) return;
+  let completed = 0;
+  let importedCount = 0;
+  files.forEach((file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || "{}"));
+        const payloads = Array.isArray(parsed) ? parsed : [parsed];
+        payloads.forEach((payload, index) => importSupplierPayload(payload, index));
+        importedCount += payloads.length;
+      } catch {
+        showActionStatus(`文件 ${file.name} 无法识别，请确认是供应商导出的 JSON。`);
+      } finally {
+        completed += 1;
+        if (completed === files.length) {
+          saveState();
+          showActionStatus(`已导入 ${importedCount} 个供应商响应文件。`);
+          render();
+        }
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
 function exportJson() {
-  const rows = state.suppliers.map((supplier) => ({ supplier: supplier.label, companyName: supplier.companyName, capabilities: supplier.capabilities, quotation: supplier.quotation, quoteTotal: quoteTotal(supplier), scores: calcScores(supplier), responses: supplier.responses.map((response) => exportRow(supplier, response)) }));
+  const rows = comparisonSuppliers().map((supplier) => ({ companyName: supplier.companyName, contact: supplier.contact, email: supplier.email, website: supplier.website, capabilities: supplier.capabilities, quotation: supplier.quotation, quoteTotal: quoteTotal(supplier), scores: calcScores(supplier), responses: supplier.responses.map((response) => exportRow(supplier, response)) }));
   const filename = "gohan-group-tender-responses.json";
   const content = JSON.stringify(rows, null, 2);
   downloadFile(filename, content, "application/json;charset=utf-8");
@@ -724,7 +804,6 @@ function exportJson() {
 function exportSupplierJson() {
   const supplier = selectedSupplier();
   const rows = {
-    supplier: supplier.label,
     companyName: supplier.companyName,
     contact: supplier.contact,
     email: supplier.email,
@@ -752,7 +831,8 @@ function exportSupplierJson() {
       };
     }),
   };
-  const filename = `gohan-group-${supplier.id}-response.json`;
+  const filenameName = String(supplier.companyName || "supplier-response").trim().replace(/[^\w\u4e00-\u9fa5-]+/g, "-").slice(0, 40) || "supplier-response";
+  const filename = `gohan-group-${filenameName}.json`;
   const content = JSON.stringify(rows, null, 2);
   downloadFile(filename, content, "application/json;charset=utf-8");
   showExportStatus(filename, content, "application/json;charset=utf-8");
@@ -760,7 +840,7 @@ function exportSupplierJson() {
 
 function exportCsv() {
   const header = ["supplier","companyName","quoteTotal","softwareFee","implementationFee","migrationFee","trainingFee","hardwareFee","thirdPartyFee","annualSaasFee","moduleCode","moduleName","requirementCode","requirementName","capabilityCategory","weightLevel","weightScore","categoryScore","weightedScore","support","depth","standardType","customDays","fee","riskNote"];
-  const rows = state.suppliers.reduce((all, supplier) => all.concat(supplier.responses.map((response) => {
+  const rows = comparisonSuppliers().reduce((all, supplier) => all.concat(supplier.responses.map((response) => {
     const row = exportRow(supplier, response);
     return header.map((key) => row[key]);
   })), []);
@@ -781,7 +861,7 @@ function exportRow(supplier, response) {
   if (!response.fee) raw -= 8;
   const weightedScore = clamp(raw) * req.weightScore;
   const q = supplier.quotation || {};
-  return { supplier: supplier.label, companyName: supplier.companyName, quoteTotal: quoteTotal(supplier), softwareFee: q.software, implementationFee: q.implementation, migrationFee: q.migration, trainingFee: q.training, hardwareFee: q.hardware, thirdPartyFee: q.thirdParty, annualSaasFee: q.annualSaas, moduleCode: req.moduleCode, moduleName: req.moduleName, requirementCode: req.requirementCode, requirementName: req.requirementName, capabilityCategory: req.capabilityCategory, weightLevel: req.weightLevel, weightScore: req.weightScore, categoryScore, weightedScore, support: response.support, depth: response.depth, standardType: response.standardType, customDays: response.customDays, fee: response.fee, riskNote: response.riskNote };
+  return { supplier: displaySupplierName(supplier), companyName: supplier.companyName, quoteTotal: quoteTotal(supplier), softwareFee: q.software, implementationFee: q.implementation, migrationFee: q.migration, trainingFee: q.training, hardwareFee: q.hardware, thirdPartyFee: q.thirdParty, annualSaasFee: q.annualSaas, moduleCode: req.moduleCode, moduleName: req.moduleName, requirementCode: req.requirementCode, requirementName: req.requirementName, capabilityCategory: req.capabilityCategory, weightLevel: req.weightLevel, weightScore: req.weightScore, categoryScore, weightedScore, support: response.support, depth: response.depth, standardType: response.standardType, customDays: response.customDays, fee: response.fee, riskNote: response.riskNote };
 }
 
 function csvCell(value) { return `"${String(value === undefined || value === null ? "" : value).replace(/"/g, '""')}"`; }
