@@ -1,11 +1,12 @@
+const SPREADSHEET_ID = "PASTE_GOOGLE_SHEET_ID_HERE";
 const SUBMISSIONS_SHEET = "Submissions";
 const RESPONSES_SHEET = "Responses";
 
 function doPost(e) {
   const body = JSON.parse((e && e.postData && e.postData.contents) || "{}");
   const supplier = body.supplier || body;
-  saveSupplierSubmission_(supplier);
-  return jsonOutput_({ ok: true, message: "submitted" });
+  const result = saveSupplierSubmission_(supplier);
+  return jsonOutput_({ ok: true, message: "submitted", result });
 }
 
 function doGet(e) {
@@ -20,7 +21,9 @@ function doGet(e) {
 }
 
 function saveSupplierSubmission_(supplier) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
+  const companyName = String(supplier.companyName || "").trim();
+  if (!companyName) throw new Error("companyName is required");
   const submissions = ensureSheet_(ss, SUBMISSIONS_SHEET, [
     "timestamp",
     "companyName",
@@ -45,17 +48,19 @@ function saveSupplierSubmission_(supplier) {
   ]);
 
   const now = new Date();
+  const submissionId = Utilities.getUuid();
   submissions.appendRow([
     now,
-    supplier.companyName || "",
+    companyName,
     supplier.contact || "",
     supplier.quoteTotal || "",
     JSON.stringify(supplier),
   ]);
 
+  deleteRowsByCompany_(responses, 2, companyName);
   const rows = (supplier.responses || []).map((item) => [
     now,
-    supplier.companyName || "",
+    companyName,
     item.moduleCode || "",
     item.moduleName || "",
     item.requirementCode || "",
@@ -71,10 +76,11 @@ function saveSupplierSubmission_(supplier) {
   if (rows.length) {
     responses.getRange(responses.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
   }
+  return { submissionId, companyName, submittedAt: now, responseRows: rows.length };
 }
 
 function latestSupplierPayloads_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = getSpreadsheet_();
   const sheet = ss.getSheetByName(SUBMISSIONS_SHEET);
   if (!sheet || sheet.getLastRow() < 2) return [];
   const values = sheet.getRange(2, 1, sheet.getLastRow() - 1, 5).getValues();
@@ -83,15 +89,30 @@ function latestSupplierPayloads_() {
     const companyName = String(row[1] || "").trim();
     const payloadJson = row[4];
     if (!companyName || !payloadJson) return;
-    latestByCompany[companyName] = payloadJson;
+    latestByCompany[companyName] = { timestamp: row[0], payloadJson };
   });
-  return Object.values(latestByCompany).map((json) => {
+  return Object.values(latestByCompany).map((item) => {
     try {
-      return JSON.parse(json);
+      const payload = JSON.parse(item.payloadJson);
+      payload.submissionStatus = {
+        status: "success",
+        message: "已从 Google Sheets 后台读取最新提交。",
+        submittedAt: item.timestamp,
+      };
+      return payload;
     } catch (error) {
       return null;
     }
   }).filter(Boolean);
+}
+
+function getSpreadsheet_() {
+  if (SPREADSHEET_ID && SPREADSHEET_ID !== "PASTE_GOOGLE_SHEET_ID_HERE") {
+    return SpreadsheetApp.openById(SPREADSHEET_ID);
+  }
+  const active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  throw new Error("请在 Code.gs 顶部填写 SPREADSHEET_ID，或从目标 Google Sheet 内打开 Apps Script。");
 }
 
 function ensureSheet_(ss, name, headers) {
@@ -100,6 +121,17 @@ function ensureSheet_(ss, name, headers) {
     sheet.appendRow(headers);
   }
   return sheet;
+}
+
+function deleteRowsByCompany_(sheet, companyColumn, companyName) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  const values = sheet.getRange(2, companyColumn, lastRow - 1, 1).getValues();
+  for (let i = values.length - 1; i >= 0; i -= 1) {
+    if (String(values[i][0] || "").trim() === companyName) {
+      sheet.deleteRow(i + 2);
+    }
+  }
 }
 
 function jsonOutput_(payload) {

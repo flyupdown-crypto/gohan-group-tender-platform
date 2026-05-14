@@ -570,6 +570,74 @@ button {
   font-weight: 900;
 }
 
+.submission-status {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.submission-status > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.submission-status span,
+.submission-status small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.submission-status strong {
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.submission-status p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.submission-status.success {
+  border-color: #bde5cc;
+  background: var(--green-2);
+}
+
+.submission-status.success strong {
+  background: #dff4e7;
+  color: var(--green);
+}
+
+.submission-status.error {
+  border-color: #f0b8b8;
+  background: var(--red-2);
+}
+
+.submission-status.error strong {
+  background: #fde4e4;
+  color: var(--red);
+}
+
+.submission-status.pending {
+  border-color: #f0d29a;
+  background: var(--amber-2);
+}
+
+.submission-status.pending strong {
+  background: #fff0cf;
+  color: var(--amber);
+}
+
 .supplier-progress-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

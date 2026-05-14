@@ -70,6 +70,7 @@ const defaultState = {
     notes: "",
     capabilities: { gdpr: "", europeDeploy: "", openApi: "", thirdParty: "", thirdPartySummary: "", successCase: "" },
     quotation: { software: "", implementation: "", migration: "", training: "", hardware: "", thirdParty: "", annualSaas: "", notes: "" },
+    submissionStatus: { status: "idle", message: "尚未提交到后台", submittedAt: "" },
     declarations: [supplierIndex === 0, supplierIndex === 0, false, false, false],
     responses: createDefaultResponses(supplierIndex),
   })),
@@ -136,6 +137,7 @@ function loadState() {
         ...savedSupplier,
         capabilities: { ...baseSupplier.capabilities, ...(savedSupplier.capabilities || {}) },
         quotation,
+        submissionStatus: { ...baseSupplier.submissionStatus, ...(savedSupplier.submissionStatus || {}) },
         responses: requirements.map((req, i) => normalizeLegacyResponse({ ...baseSupplier.responses[i], ...(savedSupplier.responses || []).find((r) => r.requirementCode === req.requirementCode), requirementCode: req.requirementCode }, isLegacyState)),
       };
     });
@@ -372,7 +374,7 @@ function renderSidebar() {
 function renderTopbar() {
   const actions = currentMode === "supplier"
     ? `<div class="actions"><button type="button" class="btn primary" data-submit-backend>${icons.export} 提交到后台</button><button type="button" class="btn" data-export="supplier-json">${icons.export} 导出备份 JSON</button></div>`
-    : `<div class="actions">${currentMode === "admin" ? `<button type="button" class="btn" data-export="json">${icons.export} 导出 JSON</button><button type="button" class="btn primary" data-export="csv">${icons.export} 导出 CSV</button>` : `<a class="btn" href="index.html?mode=supplier">切换到供应商模拟填写</a>${currentMode === "owner" ? `<a class="btn primary" href="index.html?mode=admin">管理员入口</a>` : ""}`}</div>`;
+    : `<div class="actions">${currentMode === "admin" ? `<button type="button" class="btn" data-refresh-backend>刷新后台数据</button><button type="button" class="btn" data-export="json">${icons.export} 导出 JSON</button><button type="button" class="btn primary" data-export="csv">${icons.export} 导出 CSV</button>` : `<a class="btn" href="index.html?mode=supplier">切换到供应商模拟填写</a>${currentMode === "owner" ? `<a class="btn primary" href="index.html?mode=admin">管理员入口</a>` : ""}`}</div>`;
   return `<header class="topbar"><div><h1>Gohan Group 集团数字化系统采购与供应商评估平台</h1><p>Gohan Group 跨业态数字化系统招标与供应商评估平台 · ${modeMeta[currentMode].label}</p></div><div class="topbar-tools"><span class="mode-badge">${modeMeta[currentMode].label}</span>${actions}<div class="export-status global-export-status" data-export-status></div></div></header>`;
 }
 
@@ -463,7 +465,14 @@ function renderRiskList() {
 
 function renderSupplierView(supplier) {
   const stats = calcSupplierStats(supplier);
-  return `<div class="form-surface"><div class="supplier-progress-panel" id="supplier-progress"><div class="panel-subhead"><div><h3>填写进度</h3><p>系统已启用 LocalStorage 自动保存，刷新页面后数据不会丢失。</p></div><span class="save-status">已自动保存</span></div><div class="notice">请供应商根据真实情况逐项选择。未选择的需求项会按“未填写”处理，不会自动计入已完成。</div><div class="progress-track"><span style="width:${stats.completion}%"></span></div><div class="supplier-progress-grid"><div><strong>${stats.filled}</strong><span>已填写</span></div><div><strong>${stats.missing}</strong><span>未填写</span></div><div><strong>${stats.validationCount}</strong><span>必填项缺失提示</span></div><div><strong>${stats.completion}%</strong><span>完成度</span></div></div>${stats.validationCount ? `<div class="risk-alert">当前存在 ${stats.validationCount} 项必填或风险信息缺失，请优先补充需求说明。</div>` : ""}<div class="actions">${currentMode === "supplier" ? `<button type="button" class="btn primary" data-submit-backend>${icons.export} 提交到后台</button><button type="button" class="btn" data-export="supplier-json">${icons.export} 导出备份 JSON</button>` : ""}<button type="button" class="btn" data-reset-form>重置表单</button></div><div class="export-status" data-export-status></div></div>${renderSubmitCheck(supplier)}${renderSupplierEditor(supplier)}${renderSupplierCapabilityBlock(supplier)}${renderQuotationBlock(supplier)}${renderDeclarations(supplier)}${renderDepthGuide()}${renderSearchFilters()}<div class="module-response-list">${moduleDefinitions.map((m) => renderModuleResponse(m, supplier)).join("")}</div></div>`;
+  return `<div class="form-surface"><div class="supplier-progress-panel" id="supplier-progress"><div class="panel-subhead"><div><h3>填写进度</h3><p>系统已启用 LocalStorage 自动保存，刷新页面后数据不会丢失。</p></div><span class="save-status">已自动保存</span></div><div class="notice">请供应商根据真实情况逐项选择。未选择的需求项会按“未填写”处理，不会自动计入已完成。</div><div class="progress-track"><span style="width:${stats.completion}%"></span></div><div class="supplier-progress-grid"><div><strong>${stats.filled}</strong><span>已填写</span></div><div><strong>${stats.missing}</strong><span>未填写</span></div><div><strong>${stats.validationCount}</strong><span>必填项缺失提示</span></div><div><strong>${stats.completion}%</strong><span>完成度</span></div></div>${renderSubmissionStatus(supplier)}${stats.validationCount ? `<div class="risk-alert">当前存在 ${stats.validationCount} 项必填或风险信息缺失，请优先补充需求说明。</div>` : ""}<div class="actions">${currentMode === "supplier" ? `<button type="button" class="btn primary" data-submit-backend>${icons.export} 提交到后台</button><button type="button" class="btn" data-export="supplier-json">${icons.export} 导出备份 JSON</button>` : ""}<button type="button" class="btn" data-reset-form>重置表单</button></div><div class="export-status" data-export-status></div></div>${renderSubmitCheck(supplier)}${renderSupplierEditor(supplier)}${renderSupplierCapabilityBlock(supplier)}${renderQuotationBlock(supplier)}${renderDeclarations(supplier)}${renderDepthGuide()}${renderSearchFilters()}<div class="module-response-list">${moduleDefinitions.map((m) => renderModuleResponse(m, supplier)).join("")}</div></div>`;
+}
+
+function renderSubmissionStatus(supplier) {
+  const status = supplier.submissionStatus || {};
+  const tone = status.status === "success" ? "success" : status.status === "error" ? "error" : status.status === "submitting" ? "pending" : "idle";
+  const label = status.status === "success" ? "已提交" : status.status === "error" ? "提交异常" : status.status === "submitting" ? "提交中" : "未提交";
+  return `<div class="submission-status ${tone}"><div><span>供应商提交状态</span><strong>${label}</strong></div><p>${status.message || "尚未提交到后台"}</p>${status.submittedAt ? `<small>最近提交时间：${status.submittedAt}</small>` : ""}</div>`;
 }
 
 function renderSubmitCheck(supplier) {
@@ -541,7 +550,7 @@ function renderRiskView() {
 function renderAdminView() {
   const categoryCounts = {};
   Object.keys(capabilityMeta).forEach((key) => { categoryCounts[key] = requirements.filter((req) => req.capabilityCategory === key).length; });
-  return `<div class="home-surface"><div class="section-title"><h3>全部供应商数据</h3><span>管理员用于导入供应商提交文件、检查完整度与风险状态</span></div><div class="notice">可配置 Google Sheets 轻后台自动收集供应商提交；未配置时仍可通过供应商导出的 JSON 文件导入并进入老板视图对比。</div><div class="guide-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); return `<article><span>供应商</span><strong>${displaySupplierName(supplier)}</strong><p>完成度 ${s.completion}% · 总分 ${s.totalScore} · 高风险 ${s.highRisk} 项</p>${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : `<div class="muted-text">暂无低价高风险提示</div>`}</article>`; }).join("")}</div><div class="section-title"><h3>需求结构统计</h3><span>110 项硬核需求，按能力分类统计</span></div><div class="module-grid">${Object.entries(capabilityMeta).map(([key, meta]) => `<article><h4>${key} 类：${meta.name}</h4><p>权重：${meta.weightLevel} / ${meta.weightScore}</p><span>${categoryCounts[key] || 0} 项需求</span></article>`).join("")}</div><div class="section-title"><h3>导入、导出与规则</h3><span>用于正式评审、会议汇报和供应商澄清</span></div><div class="guide-grid"><article><span>导入</span><strong>导入供应商 JSON</strong><p>支持导入一个或多个供应商填写页导出的 JSON 文件，导入后按公司名称进入对比。</p><label class="file-import"><input type="file" accept="application/json,.json" multiple data-import-supplier />选择 JSON 文件</label></article><article><span>导出</span><strong>供应商响应 JSON</strong><p>包含供应商基础能力、项目报价、逐项响应、评分与风险字段。</p><button type="button" class="btn primary" data-export="json">导出 JSON</button></article><article><span>导出</span><strong>对比结果 CSV</strong><p>包含报价结构、moduleCode、requirementCode、权重、分类分、加权分、工时和费用。</p><button type="button" class="btn primary" data-export="csv">导出 CSV</button></article><article><span>风险规则</span><strong>重点识别低价高风险</strong><p>报价明显偏低但定制开发较多、定制开发未写工时、定制开发费用缺失或总报价结构不完整。</p></article></div>${renderRiskView()}</div>`;
+  return `<div class="home-surface"><div class="section-title"><h3>全部供应商数据</h3><span>管理员用于导入供应商提交文件、检查完整度与风险状态</span></div><div class="notice">可配置 Google Sheets 轻后台自动收集供应商提交；管理员可点击“刷新后台数据”读取最新提交。重复提交按公司名称覆盖 Responses 最新明细，Submissions 保留历史记录。</div><div class="actions"><button type="button" class="btn primary" data-refresh-backend>刷新后台数据</button></div><div class="guide-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); const st = supplier.submissionStatus || {}; return `<article><span>供应商</span><strong>${displaySupplierName(supplier)}</strong><p>完成度 ${s.completion}% · 总分 ${s.totalScore} · 高风险 ${s.highRisk} 项</p><div class="muted-text">提交状态：${st.message || "未读取提交状态"}</div>${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : `<div class="muted-text">暂无低价高风险提示</div>`}</article>`; }).join("")}</div><div class="section-title"><h3>需求结构统计</h3><span>110 项硬核需求，按能力分类统计</span></div><div class="module-grid">${Object.entries(capabilityMeta).map(([key, meta]) => `<article><h4>${key} 类：${meta.name}</h4><p>权重：${meta.weightLevel} / ${meta.weightScore}</p><span>${categoryCounts[key] || 0} 项需求</span></article>`).join("")}</div><div class="section-title"><h3>导入、导出与规则</h3><span>用于正式评审、会议汇报和供应商澄清</span></div><div class="guide-grid"><article><span>导入</span><strong>导入供应商 JSON</strong><p>支持导入一个或多个供应商填写页导出的 JSON 文件，导入后按公司名称进入对比。</p><label class="file-import"><input type="file" accept="application/json,.json" multiple data-import-supplier />选择 JSON 文件</label></article><article><span>导出</span><strong>供应商响应 JSON</strong><p>包含供应商基础能力、项目报价、逐项响应、评分与风险字段。</p><button type="button" class="btn primary" data-export="json">导出 JSON</button></article><article><span>导出</span><strong>对比结果 CSV</strong><p>包含报价结构、moduleCode、requirementCode、权重、分类分、加权分、工时和费用。</p><button type="button" class="btn primary" data-export="csv">导出 CSV</button></article><article><span>风险规则</span><strong>重点识别低价高风险</strong><p>报价明显偏低但定制开发较多、定制开发未写工时、定制开发费用缺失或总报价结构不完整。</p></article></div>${renderRiskView()}</div>`;
 }
 
 function renderDisclosureBoard() {
@@ -617,6 +626,13 @@ function handleAppClick(event) {
   if (submitBackendButton) {
     event.preventDefault();
     submitSupplierToBackend();
+    return;
+  }
+
+  const refreshBackendButton = eventClosest(event, "[data-refresh-backend]");
+  if (refreshBackendButton) {
+    event.preventDefault();
+    refreshRemoteSuppliers();
     return;
   }
 
@@ -774,17 +790,29 @@ function updateResponseTotalsDisplay() {
 
 function loadRemoteSuppliersIfNeeded() {
   if (currentMode === "supplier" || remoteLoadStarted || !GOOGLE_SHEETS_WEB_APP_URL) return;
+  loadRemoteSuppliersFromBackend(false);
+}
+
+function refreshRemoteSuppliers() {
+  if (!GOOGLE_SHEETS_WEB_APP_URL) {
+    showActionStatus("Google Sheets 后台链接尚未配置，无法刷新后台数据。");
+    return;
+  }
+  showActionStatus("正在从 Google Sheets 读取最新供应商数据...");
+  loadRemoteSuppliersFromBackend(true);
+}
+
+function loadRemoteSuppliersFromBackend(force) {
+  if (remoteLoadStarted && !force) return;
   remoteLoadStarted = true;
   const callbackName = `gohanSheetsCallback${Date.now()}`;
   window[callbackName] = (payload) => {
     try {
       const suppliers = Array.isArray(payload && payload.suppliers) ? payload.suppliers : [];
       suppliers.forEach((supplier, index) => importSupplierPayload(supplier, index));
-      if (suppliers.length) {
-        saveState();
-        render();
-        showActionStatus(`已从 Google Sheets 读取 ${suppliers.length} 个供应商响应。`);
-      }
+      saveState();
+      render();
+      showActionStatus(suppliers.length ? `已从 Google Sheets 读取 ${suppliers.length} 个供应商响应。` : "Google Sheets 暂无供应商提交数据。");
     } finally {
       delete window[callbackName];
     }
@@ -797,22 +825,44 @@ function loadRemoteSuppliersIfNeeded() {
 }
 
 function submitSupplierToBackend() {
-  const payload = buildSupplierPayload(selectedSupplier());
-  if (!GOOGLE_SHEETS_WEB_APP_URL) {
-    exportSupplierJson();
-    showActionStatus("Google Sheets 后台链接尚未配置，已先导出 JSON 备份。配置 Apps Script Web App 链接后可直接提交到后台。");
+  const supplier = selectedSupplier();
+  if (!String(supplier.companyName || "").trim()) {
+    setSupplierSubmissionStatus("error", "请先填写公司名称。后台会按公司名称覆盖同一供应商的最新提交。");
+    render();
     return;
   }
+  const payload = buildSupplierPayload(supplier);
+  if (!GOOGLE_SHEETS_WEB_APP_URL) {
+    exportSupplierJson();
+    setSupplierSubmissionStatus("error", "Google Sheets 后台链接尚未配置，已先导出 JSON 备份。");
+    render();
+    return;
+  }
+  setSupplierSubmissionStatus("submitting", "正在提交到 Google Sheets 后台，请不要关闭页面。");
+  render();
   fetch(GOOGLE_SHEETS_WEB_APP_URL, {
     method: "POST",
     mode: "no-cors",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({ action: "submitSupplier", supplier: payload }),
   }).then(() => {
-    showActionStatus("已提交到 Google Sheets 后台。建议同时导出 JSON 作为本地备份。");
+    setSupplierSubmissionStatus("success", "已发送到 Google Sheets 后台。同一公司再次提交会覆盖 Responses 中的最新明细，同时保留 Submissions 历史记录。");
+    saveState();
+    render();
   }).catch(() => {
-    showActionStatus("提交到 Google Sheets 后台失败，请检查 Apps Script Web App 链接或网络状态。");
+    setSupplierSubmissionStatus("error", "提交到 Google Sheets 后台失败，请检查 Apps Script Web App 链接、访问权限或网络状态。");
+    saveState();
+    render();
   });
+}
+
+function setSupplierSubmissionStatus(status, message) {
+  selectedSupplier().submissionStatus = {
+    status,
+    message,
+    submittedAt: new Date().toLocaleString("zh-CN", { hour12: false }),
+  };
+  saveState();
 }
 function showActionStatus(message) {
   document.querySelectorAll("[data-export-status]").forEach((target) => {
@@ -912,6 +962,7 @@ function buildSupplierPayload(supplier) {
     notes: supplier.notes,
     capabilities: supplier.capabilities,
     quotation: supplier.quotation,
+    submissionStatus: supplier.submissionStatus,
     quoteTotal: quoteTotal(supplier),
     scores: calcScores(supplier),
     declarations: selfDeclarationItems.map((item, index) => ({ item, confirmed: Boolean(supplier.declarations[index]) })),
