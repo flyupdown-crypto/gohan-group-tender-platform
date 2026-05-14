@@ -1,6 +1,8 @@
 const logoPath = "./assets/logo.png";
 const STORAGE_KEY = "gohanGroupTenderPlatformV2";
 const WINDOW_STATE_PREFIX = "GOHAN_GROUP_TENDER_STATE:";
+const GOOGLE_SHEETS_WEB_APP_URL = "";
+let remoteLoadStarted = false;
 const pageMode = (() => {
   const filename = window.location.pathname.split("/").pop().toLowerCase();
   if (filename === "supplier.html") return "supplier";
@@ -85,11 +87,11 @@ function createDefaultResponses(seed) {
   return requirements.map((requirement) => {
     return {
       requirementCode: requirement.requirementCode,
-      support: "支持",
-      depth: "标准支持",
-      standardType: "标准功能",
-      customDays: "0",
-      fee: "0",
+      support: "",
+      depth: "",
+      standardType: "",
+      customDays: "",
+      fee: "",
       riskNote: "",
     };
   });
@@ -199,10 +201,10 @@ function validateResponse(response) {
   if (!response.support) warnings.push("是否支持未填写");
   if (!response.depth) warnings.push("功能深度未填写");
   if (!response.standardType) warnings.push("是否标准功能未填写");
+  if (response.standardType === "标准功能" && response.depth === "需定制开发") warnings.push("功能深度与标准功能存在矛盾");
   if (response.standardType === "标准功能" && Number(response.customDays || 0) >= 3) warnings.push("存在疑似隐性定制开发");
   if (response.standardType === "需定制开发" && !response.customDays) warnings.push("定制开发工时必填");
   if (response.standardType === "需定制开发" && !response.fee) warnings.push("定制开发费用未填写");
-  if (!response.fee) warnings.push("费用未填写");
   return warnings;
 }
 
@@ -213,7 +215,7 @@ function calcSupplierStats(supplier) {
   const standard = supplier.responses.filter((r) => r.standardType === "标准功能").length;
   const thirdParty = supplier.capabilities && supplier.capabilities.thirdParty === "是" ? 1 : 0;
   const customDays = supplier.responses.reduce((sum, r) => sum + Number(r.customDays || 0), 0);
-  const hiddenMissing = supplier.responses.filter((r) => !r.fee).length;
+  const hiddenMissing = supplier.responses.filter((r) => r.standardType === "需定制开发" && !r.fee).length;
   const validationCount = supplier.responses.reduce((sum, r) => sum + validateResponse(r).length, 0);
   const highRisk = supplier.responses.filter((r) => validateResponse(r).length >= 2 || r.depth === "基础支持").length;
   return { total, filled, missing: total - filled, standard, custom, thirdParty, customDays, hiddenMissing, validationCount, highRisk, completion: clamp((filled / total) * 82 + (supplier.declarations.filter(Boolean).length / selfDeclarationItems.length) * 12 - validationCount * 0.35) };
@@ -228,7 +230,8 @@ function calcCategoryScore(supplier, category) {
     if (r.depth === "需定制开发") score -= 18;
     if (r.standardType === "需定制开发") score -= 18;
     if (r.standardType === "需定制开发" && !r.customDays) score -= 18;
-    if (!r.fee) score -= 8;
+    if (r.standardType === "需定制开发" && !r.fee) score -= 12;
+    if (r.standardType === "标准功能" && r.depth === "需定制开发") score -= 18;
     return sum + clamp(score);
   }, 0);
   return clamp(raw / scoped.length);
@@ -267,7 +270,8 @@ function calcScores(supplier) {
     if (r.standardType === "需定制开发") score -= 18;
     if (r.standardType === "标准功能" && Number(r.customDays || 0) >= 3) score -= 20;
     if (r.standardType === "需定制开发" && !r.customDays) score -= 20;
-    if (!r.fee) score -= 8;
+    if (r.standardType === "需定制开发" && !r.fee) score -= 12;
+    if (r.standardType === "标准功能" && r.depth === "需定制开发") score -= 18;
     return sum + clamp(score) * req.weightScore;
   }, 0);
   const weightTotal = requirements.reduce((sum, r) => sum + r.weightScore, 0);
@@ -279,7 +283,7 @@ function calcScores(supplier) {
 function bossWarning(supplier) {
   const s = calcScores(supplier);
   const warnings = [];
-  if (!supplier.companyName || !supplier.declarations.every(Boolean)) warnings.push("当前数据可能仍为默认预填，请谨慎参考。");
+  if (!supplier.companyName || !supplier.declarations.every(Boolean)) warnings.push("当前数据可能尚未完整确认，请谨慎参考。");
   if ((s.categoryScores.A >= 78 || s.supportRate >= 76) && (s.erpScore < 62 || s.crossScore < 62 || s.migrationScore < 62)) warnings.push("该供应商基础功能覆盖较好，但 ERP/WMS 深度、跨业态整合或实施迁移能力不足，不建议仅依据基础功能覆盖率做决策。");
   return warnings.join(" ");
 }
@@ -294,7 +298,7 @@ function lowPriceRiskWarning(supplier) {
     s.custom > requirements.length * 0.22,
     supplier.responses.some((r) => r.standardType === "标准功能" && Number(r.customDays || 0) >= 3),
     supplier.responses.some((r) => r.standardType === "需定制开发" && !r.customDays),
-    supplier.responses.some((r) => !r.fee),
+    supplier.responses.some((r) => r.standardType === "需定制开发" && !r.fee),
     ["implementation", "migration", "training", "thirdParty", "annualSaas"].some((key) => !(supplier.quotation && supplier.quotation[key])),
   ];
   if (clearlyLow && (s.custom > requirements.length * 0.15 || supplier.responses.some((r) => r.standardType === "需定制开发" && !r.customDays))) return "该供应商报价明显偏低，可能存在后续追加开发或实施成本风险。";
@@ -308,7 +312,7 @@ function filteredRequirements(moduleName, supplier) {
     if (req.moduleName !== moduleName) return false;
     const r = supplier.responses.find((item) => item.requirementCode === req.requirementCode);
     const textMatch = !term || `${req.requirementCode}${req.requirementName}${req.moduleName}${req.capabilityName}`.toLowerCase().includes(term);
-    const filterMatch = state.activeFilter === "全部" || (state.activeFilter === "未填写" && !isFilled(r)) || (state.activeFilter === "需定制开发" && r.standardType === "需定制开发") || (state.activeFilter === "费用缺失" && !r.fee) || (state.activeFilter === "高风险" && validateResponse(r).length >= 2);
+    const filterMatch = state.activeFilter === "全部" || (state.activeFilter === "未填写" && !isFilled(r)) || (state.activeFilter === "需定制开发" && r.standardType === "需定制开发") || (state.activeFilter === "费用缺失" && r.standardType === "需定制开发" && !r.fee) || (state.activeFilter === "高风险" && validateResponse(r).length >= 2);
     return textMatch && filterMatch;
   });
 }
@@ -330,6 +334,7 @@ function render() {
   }
   setupLogoFallback();
   bindEvents();
+  loadRemoteSuppliersIfNeeded();
 }
 
 function renderSidebar() {
@@ -342,7 +347,7 @@ function renderSidebar() {
 
 function renderTopbar() {
   const actions = currentMode === "supplier"
-    ? `<div class="actions"><button type="button" class="btn primary" data-export="supplier-json">${icons.export} 提交 / 导出自身填写数据</button></div>`
+    ? `<div class="actions"><button type="button" class="btn primary" data-submit-backend>${icons.export} 提交到后台</button><button type="button" class="btn" data-export="supplier-json">${icons.export} 导出备份 JSON</button></div>`
     : `<div class="actions">${currentMode === "admin" ? `<button type="button" class="btn" data-export="json">${icons.export} 导出 JSON</button><button type="button" class="btn primary" data-export="csv">${icons.export} 导出 CSV</button>` : `<a class="btn" href="index.html?mode=supplier">切换到供应商模拟填写</a>${currentMode === "owner" ? `<a class="btn primary" href="index.html?mode=admin">管理员入口</a>` : ""}`}</div>`;
   return `<header class="topbar"><div><h1>Gohan Group 集团数字化系统采购与供应商评估平台</h1><p>Gohan Group 跨业态数字化系统招标与供应商评估平台 · ${modeMeta[currentMode].label}</p></div><div class="topbar-tools"><span class="mode-badge">${modeMeta[currentMode].label}</span>${actions}<div class="export-status global-export-status" data-export-status></div></div></header>`;
 }
@@ -434,35 +439,37 @@ function renderRiskList() {
 
 function renderSupplierView(supplier) {
   const stats = calcSupplierStats(supplier);
-  return `<div class="form-surface"><div class="supplier-progress-panel" id="supplier-progress"><div class="panel-subhead"><div><h3>填写进度</h3><p>系统已启用 LocalStorage 自动保存，刷新页面后数据不会丢失。</p></div><span class="save-status">已自动保存</span></div><div class="notice">系统已为所有需求项预填默认值，请供应商根据真实情况逐项修改。未修改内容将被视为供应商确认。</div><div class="progress-track"><span style="width:${stats.completion}%"></span></div><div class="supplier-progress-grid"><div><strong>${stats.filled}</strong><span>已填写</span></div><div><strong>${stats.missing}</strong><span>未填写</span></div><div><strong>${stats.validationCount}</strong><span>必填项缺失提示</span></div><div><strong>${stats.completion}%</strong><span>完成度</span></div></div>${stats.validationCount ? `<div class="risk-alert">当前存在 ${stats.validationCount} 项必填或风险信息缺失，请优先补充需求说明。</div>` : ""}<div class="actions">${currentMode === "supplier" ? `<button type="button" class="btn primary" data-export="supplier-json">${icons.export} 提交 / 导出自身填写数据</button>` : ""}<button type="button" class="btn" data-reset-form>重置表单</button></div><div class="export-status" data-export-status></div></div>${renderSubmitCheck(supplier)}${renderSupplierEditor(supplier)}${renderSupplierCapabilityBlock(supplier)}${renderQuotationBlock(supplier)}${renderDeclarations(supplier)}${renderSearchFilters()}<div class="module-response-list">${moduleDefinitions.map((m) => renderModuleResponse(m, supplier)).join("")}</div></div>`;
+  return `<div class="form-surface"><div class="supplier-progress-panel" id="supplier-progress"><div class="panel-subhead"><div><h3>填写进度</h3><p>系统已启用 LocalStorage 自动保存，刷新页面后数据不会丢失。</p></div><span class="save-status">已自动保存</span></div><div class="notice">请供应商根据真实情况逐项选择。未选择的需求项会按“未填写”处理，不会自动计入已完成。</div><div class="progress-track"><span style="width:${stats.completion}%"></span></div><div class="supplier-progress-grid"><div><strong>${stats.filled}</strong><span>已填写</span></div><div><strong>${stats.missing}</strong><span>未填写</span></div><div><strong>${stats.validationCount}</strong><span>必填项缺失提示</span></div><div><strong>${stats.completion}%</strong><span>完成度</span></div></div>${stats.validationCount ? `<div class="risk-alert">当前存在 ${stats.validationCount} 项必填或风险信息缺失，请优先补充需求说明。</div>` : ""}<div class="actions">${currentMode === "supplier" ? `<button type="button" class="btn primary" data-submit-backend>${icons.export} 提交到后台</button><button type="button" class="btn" data-export="supplier-json">${icons.export} 导出备份 JSON</button>` : ""}<button type="button" class="btn" data-reset-form>重置表单</button></div><div class="export-status" data-export-status></div></div>${renderSubmitCheck(supplier)}${renderSupplierEditor(supplier)}${renderSupplierCapabilityBlock(supplier)}${renderQuotationBlock(supplier)}${renderDeclarations(supplier)}${renderDepthGuide()}${renderSearchFilters()}<div class="module-response-list">${moduleDefinitions.map((m) => renderModuleResponse(m, supplier)).join("")}</div></div>`;
 }
 
 function renderSubmitCheck(supplier) {
   const stats = calcSupplierStats(supplier);
   const checks = [
     ["供应商名称已填写", Boolean(supplier.companyName)],
-    ["联系人与邮箱已填写", Boolean(supplier.contact && supplier.email)],
+    ["联系人已填写", Boolean(supplier.contact)],
     ["自声明已全部确认", supplier.declarations.every(Boolean)],
     ["项目总报价结构已填写", ["software", "implementation", "migration", "training", "annualSaas"].every((key) => supplier.quotation && supplier.quotation[key])],
-    ["基础能力已填写", ["gdpr", "europeDeploy", "openApi", "thirdParty", "successCase"].every((key) => supplier.capabilities && supplier.capabilities[key])],
+    ["基础能力已填写", ["openApi", "thirdParty", "successCase"].every((key) => supplier.capabilities && supplier.capabilities[key])],
     ["需求项无必填缺失", stats.validationCount === 0],
   ];
   return `<div class="submit-check"><div class="panel-subhead"><div><h3>提交前检查</h3><p>正式导出前建议逐项确认，减少后续澄清成本。</p></div><span class="pill ${checks.every(([, ok]) => ok) ? "green" : "amber"}">${checks.filter(([, ok]) => ok).length}/${checks.length} 已完成</span></div><div class="check-list">${checks.map(([label, ok]) => `<div class="check-item"><span class="${ok ? "check" : "miss"}">${ok ? "✓" : "!"}</span><strong>${label}</strong></div>`).join("")}</div></div>`;
 }
 
 function renderSupplierEditor(supplier) {
-  return `<div class="supplier-editor"><div class="field"><label>公司名称</label><input data-supplier-field="companyName" value="${escapeAttr(supplier.companyName)}" placeholder="请填写公司名称" /></div><div class="field"><label>联系人</label><input data-supplier-field="contact" value="${escapeAttr(supplier.contact)}" placeholder="请填写联系人" /></div><div class="field"><label>联系邮箱</label><input data-supplier-field="email" value="${escapeAttr(supplier.email)}" placeholder="请填写联系邮箱" /></div><div class="field"><label>官网</label><input data-supplier-field="website" value="${escapeAttr(supplier.website)}" placeholder="https://" /></div><div class="field span-2"><label>备注</label><textarea data-supplier-field="notes" placeholder="请填写商务范围、报价边界或交付说明">${escapeHtml(supplier.notes)}</textarea></div></div>`;
+  return `<div class="supplier-editor"><div class="field"><label>公司名称</label><input data-supplier-field="companyName" value="${escapeAttr(supplier.companyName)}" placeholder="请填写公司名称" /></div><div class="field"><label>联系人</label><input data-supplier-field="contact" value="${escapeAttr(supplier.contact)}" placeholder="请填写联系人" /></div><div class="field span-2"><label>备注</label><textarea data-supplier-field="notes" placeholder="请填写商务范围、报价边界或交付说明">${escapeHtml(supplier.notes)}</textarea></div></div>`;
 }
 
 function renderSupplierCapabilityBlock(supplier) {
-  return `<div class="declaration-block"><div class="panel-subhead"><h3>供应商基础能力</h3><p>以下内容按供应商统一填写一次，不再在每个需求项中重复填写。</p></div><div class="supplier-editor"><div class="field"><label>是否支持 GDPR</label>${supplierSelect("capabilities.gdpr", supplier, ["", "是", "否", "待确认"])}</div><div class="field"><label>是否已在欧洲部署</label>${supplierSelect("capabilities.europeDeploy", supplier, ["", "是", "否", "待确认"])}</div><div class="field"><label>是否具备 Open API</label>${supplierSelect("capabilities.openApi", supplier, ["", "是", "否", "待确认"])}</div><div class="field"><label>是否依赖第三方系统</label>${supplierSelect("capabilities.thirdParty", supplier, ["", "否", "是", "待确认"])}</div><div class="field"><label>是否提供案例</label>${supplierSelect("capabilities.successCase", supplier, ["", "是", "否", "待确认"])}</div><div class="field span-2"><label>第三方系统整体说明</label><textarea data-supplier-field="capabilities.thirdPartySummary" placeholder="请说明整体第三方依赖、接口边界和责任划分">${escapeHtml(getPath(supplier, "capabilities.thirdPartySummary"))}</textarea></div></div></div>`;
+  return `<div class="declaration-block"><div class="panel-subhead"><h3>供应商基础能力</h3><p>以下内容按供应商统一填写一次，不再在每个需求项中重复填写。</p></div><div class="supplier-editor"><div class="field"><label>是否具备 Open API</label>${supplierSelect("capabilities.openApi", supplier, ["", "是", "否", "待确认"])}</div><div class="field"><label>是否依赖第三方系统</label>${supplierSelect("capabilities.thirdParty", supplier, ["", "否", "是", "待确认"])}</div><div class="field"><label>是否提供案例</label>${supplierSelect("capabilities.successCase", supplier, ["", "是", "否", "待确认"])}</div><div class="field span-2"><label>第三方系统整体说明</label><textarea data-supplier-field="capabilities.thirdPartySummary" placeholder="请说明整体第三方依赖、接口边界和责任划分">${escapeHtml(getPath(supplier, "capabilities.thirdPartySummary"))}</textarea></div></div></div>`;
 }
 
 function renderQuotationBlock(supplier) {
   const q = supplier.quotation || {};
   const automaticTotal = money(quoteAutomaticTotal(supplier));
   const reqTotals = responseTotals(supplier);
-  return `<div class="declaration-block"><div class="panel-subhead"><div><h3>项目总报价</h3><p>请填写整体报价结构。项目总金额根据下方报价字段自动汇总。</p></div><span class="pill teal quote-total-pill">自动汇总：<strong data-quote-total>${automaticTotal}</strong></span></div><div class="supplier-editor quote-grid">${quoteField("软件总报价", "software", q.software)}${quoteField("实施服务费用", "implementation", q.implementation)}${quoteField("数据迁移费用", "migration", q.migration)}${quoteField("培训费用", "training", q.training)}${quoteField("硬件费用", "hardware", q.hardware)}${quoteField("第三方费用", "thirdParty", q.thirdParty)}${quoteField("年服务费 / SaaS 年费", "annualSaas", q.annualSaas)}<div class="field"><label>项目总金额（自动汇总）</label><input data-quote-total-input value="${escapeAttr(automaticTotal)}" readonly /></div><div class="field span-2 requirement-total-box"><div><span>需求项预计开发工时汇总</span><strong data-response-days-total>${formatDays(reqTotals.days)}</strong></div><div><span>需求项费用汇总</span><strong data-response-fee-total>${money(reqTotals.fee)}</strong></div></div><div class="field span-2 module-total-list">${moduleDefinitions.map((module) => { const totals = responseTotals(supplier, module.name); return `<div><span>${module.code}</span><b data-module-days="${module.code}">${formatDays(totals.days)}</b><strong data-module-fee="${module.code}">${money(totals.fee)}</strong></div>`; }).join("")}</div><div class="field span-2"><label>报价说明</label><textarea data-quote-field="notes" placeholder="报价范围、不包含内容、假设前提、有效期、特殊说明">${escapeHtml(q.notes)}</textarea></div></div></div>`;
+  const moduleRows = moduleDefinitions.map((module) => ({ module, totals: responseTotals(supplier, module.name) })).filter((row) => row.totals.days > 0 || row.totals.fee > 0);
+  const moduleList = moduleRows.length ? `<div class="field span-2 module-total-list">${moduleRows.map(({ module, totals }) => `<div><span>${module.code}</span><b data-module-days="${module.code}">${formatDays(totals.days)}</b><strong data-module-fee="${module.code}">${money(totals.fee)}</strong></div>`).join("")}</div>` : "";
+  return `<div class="declaration-block"><div class="panel-subhead"><div><h3>项目总报价</h3><p>请填写整体报价结构。项目总金额根据下方报价字段和需求项费用自动汇总。</p></div><span class="pill teal quote-total-pill">自动汇总：<strong data-quote-total>${automaticTotal}</strong></span></div><div class="supplier-editor quote-grid">${quoteField("软件总报价", "software", q.software)}${quoteField("实施服务费用", "implementation", q.implementation)}${quoteField("数据迁移费用", "migration", q.migration)}${quoteField("培训费用", "training", q.training)}${quoteField("硬件费用", "hardware", q.hardware)}${quoteField("第三方费用", "thirdParty", q.thirdParty)}${quoteField("年服务费 / SaaS 年费", "annualSaas", q.annualSaas)}<div class="field"><label>项目总金额（自动汇总）</label><input data-quote-total-input value="${escapeAttr(automaticTotal)}" readonly /></div><div class="field span-2 requirement-total-box"><div><span>需求项预计开发工时汇总</span><strong data-response-days-total>${formatDays(reqTotals.days)}</strong></div><div><span>需求项费用汇总</span><strong data-response-fee-total>${money(reqTotals.fee)}</strong></div></div>${moduleList}<div class="field span-2"><label>报价说明</label><textarea data-quote-field="notes" placeholder="报价范围、不包含内容、假设前提、有效期、特殊说明">${escapeHtml(q.notes)}</textarea></div></div></div>`;
 }
 
 function quoteField(label, field, value, placeholder = "例如 €12000") {
@@ -471,6 +478,16 @@ function quoteField(label, field, value, placeholder = "例如 €12000") {
 
 function renderDeclarations(supplier) {
   return `<div class="declaration-block"><div class="panel-subhead"><h3>供应商自声明</h3><span class="pill ${supplier.declarations.every(Boolean) ? "green" : "amber"}">${supplier.declarations.filter(Boolean).length}/${selfDeclarationItems.length} 已确认</span></div><div class="declaration-list">${selfDeclarationItems.map((item, index) => `<label class="checkbox-row"><input type="checkbox" data-declaration="${index}" ${supplier.declarations[index] ? "checked" : ""} /><span>${item}</span></label>`).join("")}</div></div>`;
+}
+
+function renderDepthGuide() {
+  const rows = [
+    ["深度支持", "系统已有成熟功能，并且已在类似复杂场景中落地，可覆盖集团级、多门店、多业态或 ERP/WMS 深度需求。"],
+    ["标准支持", "系统标准版本已包含该功能，可通过常规配置启用，不需要代码开发。"],
+    ["基础支持", "系统仅支持基础场景，可能无法完整覆盖 Gohan Group 的集团级或跨业态要求。"],
+    ["需定制开发", "当前标准产品不具备完整能力，需要新增开发、接口开发、流程改造或专项实施。"],
+  ];
+  return `<div class="declaration-block depth-guide"><div class="panel-subhead"><div><h3>填写说明 / 功能深度定义</h3><p>请按真实交付能力选择，避免用“支持”模糊覆盖深度差异。</p></div></div><div class="depth-guide-grid">${rows.map(([label, text]) => `<article><strong>${label}</strong><p>${text}</p></article>`).join("")}</div><div class="notice">如选择“基础支持”或“需定制开发”，请在风险说明中写明限制、前提或交付边界。</div></div>`;
 }
 
 function renderSearchFilters() {
@@ -489,7 +506,8 @@ function renderRequirementCard(req, supplier) {
   const index = requirements.findIndex((r) => r.requirementCode === req.requirementCode);
   const r = supplier.responses[index];
   const warnings = validateResponse(r);
-  return `<article class="requirement-card ${warnings.length ? "invalid-row" : ""}"><div class="requirement-card-head"><div><strong>${req.requirementCode} ${req.requirementName}</strong><small>${req.capabilityCategory} 类：${req.capabilityName}</small></div></div>${warnings.length ? `<div class="row-errors">${warnings.join("；")}</div>` : ""}<div class="compact-fields"><div class="field-row primary-fields">${mobileField("是否支持", select(index,"support",r.support,["","支持","部分支持","不支持"]))}${mobileField("功能深度", select(index,"depth",r.depth,["","深度支持","标准支持","基础支持","需定制开发"]))}${mobileField("是否标准功能", select(index,"standardType",r.standardType,["","标准功能","需定制开发"]))}</div><div class="field-row cost-fields">${mobileField("预计开发工时", input(index,"customDays",r.customDays,"人天"))}${mobileField("费用", input(index,"fee",r.fee,"例如 €1200"))}</div><div class="field-row risk-field">${mobileField("风险说明", textareaResponse(index,"riskNote",r.riskNote,"已知风险、依赖说明、限制条件或特殊实施说明"))}</div></div></article>`;
+  const costFields = r.standardType === "需定制开发" ? `<div class="field-row cost-fields">${mobileField("预计开发工时", input(index,"customDays",r.customDays,"人天"))}${mobileField("费用", input(index,"fee",r.fee,"例如 €1200"))}</div>` : "";
+  return `<article class="requirement-card ${warnings.length ? "invalid-row" : ""}"><div class="requirement-card-head"><div><strong>${req.requirementCode} ${req.requirementName}</strong><small>${req.capabilityCategory} 类：${req.capabilityName}</small></div></div>${warnings.length ? `<div class="row-errors">${warnings.join("；")}</div>` : ""}<div class="compact-fields"><div class="field-row primary-fields">${mobileField("是否支持", select(index,"support",r.support,["","支持","部分支持","不支持"]))}${mobileField("功能深度", select(index,"depth",r.depth,["","深度支持","标准支持","基础支持","需定制开发"]))}${mobileField("是否标准功能", select(index,"standardType",r.standardType,["","标准功能","需定制开发"]))}</div>${costFields}<div class="field-row risk-field">${mobileField("风险说明", textareaResponse(index,"riskNote",r.riskNote,"已知风险、依赖说明、限制条件或特殊实施说明"))}</div></div></article>`;
 }
 
 function renderRiskView() {
@@ -499,7 +517,7 @@ function renderRiskView() {
 function renderAdminView() {
   const categoryCounts = {};
   Object.keys(capabilityMeta).forEach((key) => { categoryCounts[key] = requirements.filter((req) => req.capabilityCategory === key).length; });
-  return `<div class="home-surface"><div class="section-title"><h3>全部供应商数据</h3><span>管理员用于导入供应商提交文件、检查完整度与风险状态</span></div><div class="notice">静态演示版不会自动收集外部供应商数据。供应商在填写页导出 JSON 后，管理员在此导入文件，即可加入老板视图和报价对比。</div><div class="guide-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); return `<article><span>供应商</span><strong>${displaySupplierName(supplier)}</strong><p>完成度 ${s.completion}% · 总分 ${s.totalScore} · 高风险 ${s.highRisk} 项</p>${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : `<div class="muted-text">暂无低价高风险提示</div>`}</article>`; }).join("")}</div><div class="section-title"><h3>需求结构统计</h3><span>110 项硬核需求，按能力分类统计</span></div><div class="module-grid">${Object.entries(capabilityMeta).map(([key, meta]) => `<article><h4>${key} 类：${meta.name}</h4><p>权重：${meta.weightLevel} / ${meta.weightScore}</p><span>${categoryCounts[key] || 0} 项需求</span></article>`).join("")}</div><div class="section-title"><h3>导入、导出与规则</h3><span>用于正式评审、会议汇报和供应商澄清</span></div><div class="guide-grid"><article><span>导入</span><strong>导入供应商 JSON</strong><p>支持导入一个或多个供应商填写页导出的 JSON 文件，导入后按公司名称进入对比。</p><label class="file-import"><input type="file" accept="application/json,.json" multiple data-import-supplier />选择 JSON 文件</label></article><article><span>导出</span><strong>供应商响应 JSON</strong><p>包含供应商基础能力、项目报价、逐项响应、评分与风险字段。</p><button type="button" class="btn primary" data-export="json">导出 JSON</button></article><article><span>导出</span><strong>对比结果 CSV</strong><p>包含报价结构、moduleCode、requirementCode、权重、分类分、加权分、工时和费用。</p><button type="button" class="btn primary" data-export="csv">导出 CSV</button></article><article><span>风险规则</span><strong>重点识别低价高风险</strong><p>报价明显偏低但定制开发较多、定制开发未写工时、需求费用缺失或总报价结构不完整。</p></article></div>${renderRiskView()}</div>`;
+  return `<div class="home-surface"><div class="section-title"><h3>全部供应商数据</h3><span>管理员用于导入供应商提交文件、检查完整度与风险状态</span></div><div class="notice">可配置 Google Sheets 轻后台自动收集供应商提交；未配置时仍可通过供应商导出的 JSON 文件导入并进入老板视图对比。</div><div class="guide-grid">${comparisonSuppliers().map((supplier) => { const s = calcScores(supplier); return `<article><span>供应商</span><strong>${displaySupplierName(supplier)}</strong><p>完成度 ${s.completion}% · 总分 ${s.totalScore} · 高风险 ${s.highRisk} 项</p>${lowPriceRiskWarning(supplier) ? `<div class="risk-alert">${lowPriceRiskWarning(supplier)}</div>` : `<div class="muted-text">暂无低价高风险提示</div>`}</article>`; }).join("")}</div><div class="section-title"><h3>需求结构统计</h3><span>110 项硬核需求，按能力分类统计</span></div><div class="module-grid">${Object.entries(capabilityMeta).map(([key, meta]) => `<article><h4>${key} 类：${meta.name}</h4><p>权重：${meta.weightLevel} / ${meta.weightScore}</p><span>${categoryCounts[key] || 0} 项需求</span></article>`).join("")}</div><div class="section-title"><h3>导入、导出与规则</h3><span>用于正式评审、会议汇报和供应商澄清</span></div><div class="guide-grid"><article><span>导入</span><strong>导入供应商 JSON</strong><p>支持导入一个或多个供应商填写页导出的 JSON 文件，导入后按公司名称进入对比。</p><label class="file-import"><input type="file" accept="application/json,.json" multiple data-import-supplier />选择 JSON 文件</label></article><article><span>导出</span><strong>供应商响应 JSON</strong><p>包含供应商基础能力、项目报价、逐项响应、评分与风险字段。</p><button type="button" class="btn primary" data-export="json">导出 JSON</button></article><article><span>导出</span><strong>对比结果 CSV</strong><p>包含报价结构、moduleCode、requirementCode、权重、分类分、加权分、工时和费用。</p><button type="button" class="btn primary" data-export="csv">导出 CSV</button></article><article><span>风险规则</span><strong>重点识别低价高风险</strong><p>报价明显偏低但定制开发较多、定制开发未写工时、定制开发费用缺失或总报价结构不完整。</p></article></div>${renderRiskView()}</div>`;
 }
 
 function renderDisclosureBoard() {
@@ -514,7 +532,7 @@ function renderCriteriaPanel() {
 
 function renderDetailPanel(supplier) {
   const s = calcScores(supplier);
-  return `<aside class="panel detail-panel"><div class="supplier-head"><div><h2>${displaySupplierName(supplier)}</h2><div class="supplier-meta">联系人：${supplier.contact || "未填写"} · 官网：${supplier.website || "未填写"}</div></div><div class="status-row"><span class="pill ${riskClass(s.risk)}">${s.risk === "high" ? "高风险" : s.risk === "medium" ? "中风险" : "低风险"}</span><span class="pill ${s.completion >= 80 ? "green" : s.completion >= 55 ? "amber" : "red"}">${s.completion}% 完成</span></div></div>${lowPriceRiskWarning(supplier) ? `<div class="detail-section"><div class="risk-alert">${lowPriceRiskWarning(supplier)}</div></div>` : ""}<div class="detail-section"><h3>决策摘要</h3><div class="risk-grid"><div class="risk-cell low">总分<small>${s.totalScore}</small></div><div class="risk-cell medium">ERP<small>${s.erpScore}</small></div><div class="risk-cell medium">跨业态<small>${s.crossScore}</small></div><div class="risk-cell high">高风险<small>${s.highRisk} 项</small></div></div></div><div class="detail-section"><h3>报价与风险</h3><div class="disclosure-list"><div class="disclosure-item"><span class="warn">价</span><span>项目总金额：${money(quoteTotal(supplier))}</span><span></span></div><div class="disclosure-item"><span class="warn">工</span><span>定制开发：${s.custom} 项，${s.customDays} 人天</span><span></span></div><div class="disclosure-item"><span class="warn">费</span><span>需求项费用缺失：${s.hiddenMissing} 项</span><span></span></div></div></div></aside>`;
+  return `<aside class="panel detail-panel"><div class="supplier-head"><div><h2>${displaySupplierName(supplier)}</h2><div class="supplier-meta">联系人：${supplier.contact || "未填写"}</div></div><div class="status-row"><span class="pill ${riskClass(s.risk)}">${s.risk === "high" ? "高风险" : s.risk === "medium" ? "中风险" : "低风险"}</span><span class="pill ${s.completion >= 80 ? "green" : s.completion >= 55 ? "amber" : "red"}">${s.completion}% 完成</span></div></div>${lowPriceRiskWarning(supplier) ? `<div class="detail-section"><div class="risk-alert">${lowPriceRiskWarning(supplier)}</div></div>` : ""}<div class="detail-section"><h3>决策摘要</h3><div class="risk-grid"><div class="risk-cell low">总分<small>${s.totalScore}</small></div><div class="risk-cell medium">ERP<small>${s.erpScore}</small></div><div class="risk-cell medium">跨业态<small>${s.crossScore}</small></div><div class="risk-cell high">高风险<small>${s.highRisk} 项</small></div></div></div><div class="detail-section"><h3>报价与风险</h3><div class="disclosure-list"><div class="disclosure-item"><span class="warn">价</span><span>项目总金额：${money(quoteTotal(supplier))}</span><span></span></div><div class="disclosure-item"><span class="warn">工</span><span>定制开发：${s.custom} 项，${s.customDays} 人天</span><span></span></div><div class="disclosure-item"><span class="warn">费</span><span>定制开发费用缺失：${s.hiddenMissing} 项</span><span></span></div></div></div></aside>`;
 }
 
 function mini(value) { return `<div class="mini-score"><span>${clamp(value)}</span><div class="bar ${riskClass(value < 60 ? "high" : value < 78 ? "medium" : "low")}"><span style="width:${clamp(value)}%"></span></div></div>`; }
@@ -568,6 +586,13 @@ function handleAppClick(event) {
     if (exportButton.dataset.export === "supplier-json") exportSupplierJson();
     else if (exportButton.dataset.export === "json") exportJson();
     else exportCsv();
+    return;
+  }
+
+  const submitBackendButton = eventClosest(event, "[data-submit-backend]");
+  if (submitBackendButton) {
+    event.preventDefault();
+    submitSupplierToBackend();
     return;
   }
 
@@ -646,11 +671,21 @@ function handleEditableField(event, isChangeEvent) {
 
   const responseField = eventClosest(event, "[data-response-row]");
   if (responseField) {
-    selectedSupplier().responses[Number(responseField.dataset.responseRow)][responseField.dataset.responseField] = responseField.value;
+    const response = selectedSupplier().responses[Number(responseField.dataset.responseRow)];
+    const field = responseField.dataset.responseField;
+    response[field] = responseField.value;
+    if (field === "standardType" && responseField.value === "标准功能") {
+      response.customDays = "0";
+      response.fee = "0";
+    }
+    if (field === "standardType" && responseField.value === "需定制开发" && response.customDays === "0" && response.fee === "0") {
+      response.customDays = "";
+      response.fee = "";
+    }
     saveState();
     markSaved();
     updateQuoteTotalDisplay();
-    if (isChangeEvent && responseField.tagName === "SELECT") render();
+    if (isChangeEvent && (responseField.tagName === "SELECT" || ["customDays", "fee"].includes(field))) render();
     else refreshDetailOnly();
   }
 }
@@ -677,7 +712,7 @@ function resetCurrentSupplierForm() {
   selectedSupplier().responses = createDefaultResponses();
   saveState();
   render();
-  showActionStatus("已重置为系统默认预填值。");
+  showActionStatus("已重置为空白待填写状态。");
 }
 function jumpToModule(moduleName) {
   const module = moduleDefinitions.find((m) => m.name === moduleName || m.code === moduleName);
@@ -710,6 +745,49 @@ function updateResponseTotalsDisplay() {
     const totals = responseTotals(selectedSupplier(), module.name);
     document.querySelectorAll(`[data-module-days="${module.code}"]`).forEach((el) => { el.textContent = formatDays(totals.days); });
     document.querySelectorAll(`[data-module-fee="${module.code}"]`).forEach((el) => { el.textContent = money(totals.fee); });
+  });
+}
+
+function loadRemoteSuppliersIfNeeded() {
+  if (currentMode === "supplier" || remoteLoadStarted || !GOOGLE_SHEETS_WEB_APP_URL) return;
+  remoteLoadStarted = true;
+  const callbackName = `gohanSheetsCallback${Date.now()}`;
+  window[callbackName] = (payload) => {
+    try {
+      const suppliers = Array.isArray(payload && payload.suppliers) ? payload.suppliers : [];
+      suppliers.forEach((supplier, index) => importSupplierPayload(supplier, index));
+      if (suppliers.length) {
+        saveState();
+        render();
+        showActionStatus(`已从 Google Sheets 读取 ${suppliers.length} 个供应商响应。`);
+      }
+    } finally {
+      delete window[callbackName];
+    }
+  };
+  const script = document.createElement("script");
+  const joiner = GOOGLE_SHEETS_WEB_APP_URL.includes("?") ? "&" : "?";
+  script.src = `${GOOGLE_SHEETS_WEB_APP_URL}${joiner}action=list&callback=${callbackName}`;
+  script.onerror = () => showActionStatus("无法读取 Google Sheets 后台，请检查 Apps Script Web App 链接是否已部署。");
+  document.body.appendChild(script);
+}
+
+function submitSupplierToBackend() {
+  const payload = buildSupplierPayload(selectedSupplier());
+  if (!GOOGLE_SHEETS_WEB_APP_URL) {
+    exportSupplierJson();
+    showActionStatus("Google Sheets 后台链接尚未配置，已先导出 JSON 备份。配置 Apps Script Web App 链接后可直接提交到后台。");
+    return;
+  }
+  fetch(GOOGLE_SHEETS_WEB_APP_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify({ action: "submitSupplier", supplier: payload }),
+  }).then(() => {
+    showActionStatus("已提交到 Google Sheets 后台。建议同时导出 JSON 作为本地备份。");
+  }).catch(() => {
+    showActionStatus("提交到 Google Sheets 后台失败，请检查 Apps Script Web App 链接或网络状态。");
   });
 }
 function showActionStatus(message) {
@@ -784,8 +862,8 @@ function importSupplierFiles(files) {
         completed += 1;
         if (completed === files.length) {
           saveState();
-          showActionStatus(`已导入 ${importedCount} 个供应商响应文件。`);
           render();
+          showActionStatus(`已导入 ${importedCount} 个供应商响应文件。`);
         }
       }
     };
@@ -794,24 +872,22 @@ function importSupplierFiles(files) {
 }
 
 function exportJson() {
-  const rows = comparisonSuppliers().map((supplier) => ({ companyName: supplier.companyName, contact: supplier.contact, email: supplier.email, website: supplier.website, capabilities: supplier.capabilities, quotation: supplier.quotation, quoteTotal: quoteTotal(supplier), scores: calcScores(supplier), responses: supplier.responses.map((response) => exportRow(supplier, response)) }));
+  const rows = comparisonSuppliers().map((supplier) => buildSupplierPayload(supplier));
   const filename = "gohan-group-tender-responses.json";
   const content = JSON.stringify(rows, null, 2);
   downloadFile(filename, content, "application/json;charset=utf-8");
   showExportStatus(filename, content, "application/json;charset=utf-8");
 }
 
-function exportSupplierJson() {
-  const supplier = selectedSupplier();
-  const rows = {
+function buildSupplierPayload(supplier) {
+  return {
     companyName: supplier.companyName,
     contact: supplier.contact,
-    email: supplier.email,
-    website: supplier.website,
     notes: supplier.notes,
     capabilities: supplier.capabilities,
     quotation: supplier.quotation,
     quoteTotal: quoteTotal(supplier),
+    scores: calcScores(supplier),
     declarations: selfDeclarationItems.map((item, index) => ({ item, confirmed: Boolean(supplier.declarations[index]) })),
     progress: calcSupplierStats(supplier),
     responses: supplier.responses.map((response) => {
@@ -831,6 +907,11 @@ function exportSupplierJson() {
       };
     }),
   };
+}
+
+function exportSupplierJson() {
+  const supplier = selectedSupplier();
+  const rows = buildSupplierPayload(supplier);
   const filenameName = String(supplier.companyName || "supplier-response").trim().replace(/[^\w\u4e00-\u9fa5-]+/g, "-").slice(0, 40) || "supplier-response";
   const filename = `gohan-group-${filenameName}.json`;
   const content = JSON.stringify(rows, null, 2);
@@ -858,7 +939,8 @@ function exportRow(supplier, response) {
   if (response.depth === "需定制开发") raw -= 18;
   if (response.standardType === "需定制开发") raw -= 18;
   if (response.standardType === "需定制开发" && !response.customDays) raw -= 20;
-  if (!response.fee) raw -= 8;
+  if (response.standardType === "需定制开发" && !response.fee) raw -= 12;
+  if (response.standardType === "标准功能" && response.depth === "需定制开发") raw -= 18;
   const weightedScore = clamp(raw) * req.weightScore;
   const q = supplier.quotation || {};
   return { supplier: displaySupplierName(supplier), companyName: supplier.companyName, quoteTotal: quoteTotal(supplier), softwareFee: q.software, implementationFee: q.implementation, migrationFee: q.migration, trainingFee: q.training, hardwareFee: q.hardware, thirdPartyFee: q.thirdParty, annualSaasFee: q.annualSaas, moduleCode: req.moduleCode, moduleName: req.moduleName, requirementCode: req.requirementCode, requirementName: req.requirementName, capabilityCategory: req.capabilityCategory, weightLevel: req.weightLevel, weightScore: req.weightScore, categoryScore, weightedScore, support: response.support, depth: response.depth, standardType: response.standardType, customDays: response.customDays, fee: response.fee, riskNote: response.riskNote };

@@ -1491,6 +1491,33 @@ tr.selected td {
   color: var(--ink);
 }
 
+.depth-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.depth-guide-grid article {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+  display: grid;
+  gap: 7px;
+}
+
+.depth-guide-grid strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.depth-guide-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .module-stats b {
   font: inherit;
 }
@@ -1577,6 +1604,7 @@ tr.selected td {
   .decision-grid,
   .heatmap-grid,
   .weight-grid,
+  .depth-guide-grid,
   .check-list,
   .supplier-progress-grid,
   .hero-card {
