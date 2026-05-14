@@ -70,7 +70,7 @@ const defaultState = {
     notes: "",
     capabilities: { gdpr: "", europeDeploy: "", openApi: "", thirdParty: "", thirdPartySummary: "", successCase: "" },
     quotation: { software: "", implementation: "", migration: "", training: "", hardware: "", thirdParty: "", annualSaas: "", notes: "" },
-    submissionStatus: { status: "idle", message: "尚未提交到后台", submittedAt: "" },
+    submissionStatus: { status: "idle", message: "尚未提交", submittedAt: "" },
     declarations: [supplierIndex === 0, supplierIndex === 0, false, false, false],
     responses: createDefaultResponses(supplierIndex),
   })),
@@ -472,7 +472,7 @@ function renderSubmissionStatus(supplier) {
   const status = supplier.submissionStatus || {};
   const tone = status.status === "success" ? "success" : status.status === "error" ? "error" : status.status === "submitting" ? "pending" : "idle";
   const label = status.status === "success" ? "已提交" : status.status === "error" ? "提交异常" : status.status === "submitting" ? "提交中" : "未提交";
-  return `<div class="submission-status ${tone}"><div><span>供应商提交状态</span><strong>${label}</strong></div><p>${status.message || "尚未提交到后台"}</p>${status.submittedAt ? `<small>最近提交时间：${status.submittedAt}</small>` : ""}</div>`;
+  return `<div class="submission-status ${tone}"><div><span>供应商提交状态</span><strong>${label}</strong></div><p>${status.message || "尚未提交"}</p>${status.submittedAt ? `<small>最近提交时间：${status.submittedAt}</small>` : ""}</div>`;
 }
 
 function renderSubmitCheck(supplier) {
@@ -827,18 +827,18 @@ function loadRemoteSuppliersFromBackend(force) {
 function submitSupplierToBackend() {
   const supplier = selectedSupplier();
   if (!String(supplier.companyName || "").trim()) {
-    setSupplierSubmissionStatus("error", "请先填写公司名称。后台会按公司名称覆盖同一供应商的最新提交。");
+    setSupplierSubmissionStatus("error", "请先填写公司名称，再提交本次供应商响应。");
     render();
     return;
   }
   const payload = buildSupplierPayload(supplier);
   if (!GOOGLE_SHEETS_WEB_APP_URL) {
     exportSupplierJson();
-    setSupplierSubmissionStatus("error", "Google Sheets 后台链接尚未配置，已先导出 JSON 备份。");
+    setSupplierSubmissionStatus("error", "当前提交服务尚未配置，已先导出 JSON 备份。");
     render();
     return;
   }
-  setSupplierSubmissionStatus("submitting", "正在提交到 Google Sheets 后台，请不要关闭页面。");
+  setSupplierSubmissionStatus("submitting", "正在提交，请不要关闭页面。");
   render();
   fetch(GOOGLE_SHEETS_WEB_APP_URL, {
     method: "POST",
@@ -846,11 +846,11 @@ function submitSupplierToBackend() {
     headers: { "Content-Type": "text/plain;charset=utf-8" },
     body: JSON.stringify({ action: "submitSupplier", supplier: payload }),
   }).then(() => {
-    setSupplierSubmissionStatus("success", "已发送到 Google Sheets 后台。同一公司再次提交会覆盖 Responses 中的最新明细，同时保留 Submissions 历史记录。");
+    setSupplierSubmissionStatus("success", "提交成功。我们已收到贵司本次供应商响应。");
     saveState();
     render();
   }).catch(() => {
-    setSupplierSubmissionStatus("error", "提交到 Google Sheets 后台失败，请检查 Apps Script Web App 链接、访问权限或网络状态。");
+    setSupplierSubmissionStatus("error", "提交失败，请稍后重试，或联系项目管理员确认提交通道。");
     saveState();
     render();
   });
