@@ -1,6 +1,7 @@
 const logoPath = "./assets/logo.png";
 const STORAGE_KEY = "gohanGroupTenderPlatformV2";
 const WINDOW_STATE_PREFIX = "GOHAN_GROUP_TENDER_STATE:";
+const DATA_SCHEMA_VERSION = 4;
 const GOOGLE_SHEETS_WEB_APP_URL = "";
 let remoteLoadStarted = false;
 const pageMode = (() => {
@@ -51,6 +52,7 @@ const requirements = moduleDefinitions.reduce((all, module) => all.concat(module
 const selfDeclarationItems = ["我方已阅读本项目背景与需求范围", "我方确认报价已包含所列功能的实施成本", "我方已明确区分标准功能与定制开发功能", "如需额外开发，已填写预计工时与费用", "未在本表中说明的额外费用，不应作为后续追加预算依据"];
 
 const defaultState = {
+  schemaVersion: DATA_SCHEMA_VERSION,
   selectedSupplierId: "supplierA",
   activeView: "home",
   activeRole: "客户老板视图",
@@ -75,6 +77,7 @@ const defaultState = {
 
 let state = loadState();
 normalizeModeState();
+saveState();
 
 const icons = {
   dashboard: `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="8" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="15" width="7" height="6" rx="1"/></svg>`,
@@ -97,12 +100,33 @@ function createDefaultResponses(seed) {
   });
 }
 
+function normalizeLegacyResponse(response, isLegacyState) {
+  const next = { ...response };
+  const looksLikeOldPrefill = isLegacyState
+    && next.support === "支持"
+    && next.depth === "标准支持"
+    && next.standardType === "标准功能"
+    && String(next.customDays || "") === "0"
+    && String(next.fee || "") === "0"
+    && !next.riskNote;
+  if (looksLikeOldPrefill) {
+    next.support = "";
+    next.depth = "";
+    next.standardType = "";
+    next.customDays = "";
+    next.fee = "";
+  }
+  return next;
+}
+
 function loadState() {
   try {
     const saved = readSavedState();
     if (!saved || !Array.isArray(saved.suppliers)) return cloneData(defaultState);
+    const isLegacyState = Number(saved.schemaVersion || 0) < DATA_SCHEMA_VERSION;
     const next = cloneData(defaultState);
     Object.assign(next, saved);
+    next.schemaVersion = DATA_SCHEMA_VERSION;
     next.suppliers = next.suppliers.map((baseSupplier) => {
       const savedSupplier = saved.suppliers.find((supplier) => supplier.id === baseSupplier.id) || {};
       const quotation = { ...baseSupplier.quotation, ...(savedSupplier.quotation || {}) };
@@ -112,7 +136,7 @@ function loadState() {
         ...savedSupplier,
         capabilities: { ...baseSupplier.capabilities, ...(savedSupplier.capabilities || {}) },
         quotation,
-        responses: requirements.map((req, i) => ({ ...baseSupplier.responses[i], ...(savedSupplier.responses || []).find((r) => r.requirementCode === req.requirementCode), requirementCode: req.requirementCode })),
+        responses: requirements.map((req, i) => normalizeLegacyResponse({ ...baseSupplier.responses[i], ...(savedSupplier.responses || []).find((r) => r.requirementCode === req.requirementCode), requirementCode: req.requirementCode }, isLegacyState)),
       };
     });
     return next;
@@ -807,6 +831,7 @@ function showExportStatus(filename, content, type = "application/json;charset=ut
 
 function normalizeImportedSupplier(payload, index) {
   const base = cloneData(defaultState.suppliers[0]);
+  const isLegacyState = Number(payload.schemaVersion || 0) < DATA_SCHEMA_VERSION;
   const safeName = String(payload.companyName || payload.supplier || `导入供应商 ${index + 1}`).trim();
   base.id = `imported-${Date.now()}-${index}-${safeName.replace(/[^\w\u4e00-\u9fa5-]+/g, "-").slice(0, 24)}`;
   base.code = "";
@@ -828,7 +853,7 @@ function normalizeImportedSupplier(payload, index) {
   const importedResponses = Array.isArray(payload.responses) ? payload.responses : [];
   base.responses = requirements.map((req, i) => {
     const source = importedResponses.find((item) => item.requirementCode === req.requirementCode) || {};
-    return { ...base.responses[i], ...source, requirementCode: req.requirementCode };
+    return normalizeLegacyResponse({ ...base.responses[i], ...source, requirementCode: req.requirementCode }, isLegacyState);
   });
   return base;
 }
@@ -881,6 +906,7 @@ function exportJson() {
 
 function buildSupplierPayload(supplier) {
   return {
+    schemaVersion: DATA_SCHEMA_VERSION,
     companyName: supplier.companyName,
     contact: supplier.contact,
     notes: supplier.notes,
