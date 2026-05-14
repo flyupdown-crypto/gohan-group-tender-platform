@@ -2,7 +2,7 @@ const logoPath = "./assets/logo.png";
 const STORAGE_KEY = "gohanGroupTenderPlatformV2";
 const WINDOW_STATE_PREFIX = "GOHAN_GROUP_TENDER_STATE:";
 const DATA_SCHEMA_VERSION = 4;
-const GOOGLE_SHEETS_WEB_APP_URL = "";
+const GOOGLE_SHEETS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyF6xppyQ7BkYZbe6EAW0kj2tMv3nCJQaw9KWC6XqTONP4l5uBr4VxUPd7pfC-QJxz7/exec";
 let remoteLoadStarted = false;
 const pageMode = (() => {
   const filename = window.location.pathname.split("/").pop().toLowerCase();
